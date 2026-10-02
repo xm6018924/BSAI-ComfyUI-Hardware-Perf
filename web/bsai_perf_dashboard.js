@@ -252,10 +252,12 @@
             // 记录拖拽前是否贴边（用视觉位置判断，不依赖 inline style）
             const preRect = panel.getBoundingClientRect();
             const wasDocked = preRect.left < 80 || preRect.right > window.innerWidth - 80;
-            // 拖拽前：先把当前视觉位置换算成 left，避免 right=auto 后面板跳到左侧
+            // 拖拽前：先把当前视觉位置换算成 left/top，清除 bottom/right 贴边约束
             const rect = preRect;
             panel.style.right = "auto";
+            panel.style.bottom = "auto";
             panel.style.left = rect.left + "px";
+            panel.style.top = rect.top + "px";
             dragState = {
                 dx: e.clientX - panel.offsetLeft,
                 dy: e.clientY - panel.offsetTop,
@@ -346,8 +348,13 @@
             const vw = window.innerWidth;
             if (r.left < 80) {
                 applyLayout("vertical", "left", true);
+                // 保持松手时的垂直位置
+                panel.style.bottom = "auto";
+                panel.style.top = r.top + "px";
             } else if (r.right > vw - 80) {
                 applyLayout("vertical", "right", true);
+                panel.style.bottom = "auto";
+                panel.style.top = r.top + "px";
             } else if (wasDocked) {
                 // 从贴边拖到中间 → 自动横版
                 applyLayout("horizontal", null, false);
