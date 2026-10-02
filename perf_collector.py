@@ -10,6 +10,8 @@ Intel NPU(8191)、CPU/内存 的实时性能参数，供前端仪表盘轮询。
 
 import json
 import os
+import subprocess
+import threading
 import time
 import urllib.request
 
@@ -96,38 +98,82 @@ def _http_json(url, timeout=1.5, offline_retry_s=5.0):
         return None, None
 
 
+_INTEL_UTIL_CACHE = 0.0
+_INTEL_UTIL_LOCK = threading.Lock()
+
+
+def _intel_gpu_poller():
+    """后台线程：每 2 秒读一次 Intel 核显 GPU 利用率，写入缓存。"""
+    ps = (
+        "Get-Counter '\\GPU Engine(*)\\Utilization Percentage' "
+        "-ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty CounterSamples | "
+        "Where-Object {$_.InstanceName -like '*luid_0x00014731*' -and $_.CookedValue -gt 0} | "
+        "Measure-Object CookedValue -Average | "
+        "Select-Object -ExpandProperty Average"
+    )
+    while True:
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000,
+            )
+            v = float(r.stdout.strip() or 0)
+            with _INTEL_UTIL_LOCK:
+                global _INTEL_UTIL_CACHE
+                _INTEL_UTIL_CACHE = max(0, min(100, v))
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+threading.Thread(target=_intel_gpu_poller, daemon=True).start()
+
+
+def _read_intel_gpu_util():
+    """返回缓存的 Intel 核显利用率 (0-100)。"""
+    with _INTEL_UTIL_LOCK:
+        return int(round(_INTEL_UTIL_CACHE))
+
+
 def collect_xpu_worker():
-    """8190 XPU worker（Intel 核显跑 VAE decode）的显存/内存状态。"""
+    """8190 XPU worker（Intel 核显跑 VAE decode）的显存/内存状态 + 真实核显利用率。"""
     out = {"ok": False, "online": False, "util": 0, "vram_used_mb": 0,
            "vram_total_mb": 0, "ram_used_mb": 0, "ram_total_mb": 0,
            "latency_ms": 0, "device_name": "N/A"}
     data, latency = _http_json(XPU_WORKER_URL)
-    if data is None:
-        return out
-    out["ok"] = True
-    out["online"] = True
-    out["latency_ms"] = round(latency, 1)
-    try:
-        devs = data.get("devices") or []
-        if devs:
-            d0 = devs[0]
-            out["device_name"] = d0.get("name", "N/A")
-            out["vram_used_mb"] = (d0.get("vram_total", 0) - d0.get("vram_free", 0)) // (1024 * 1024)
-            out["vram_total_mb"] = d0.get("vram_total", 0) // (1024 * 1024)
-    except Exception:
-        pass
-    try:
-        sys_info = data.get("system") or {}
-        out["ram_used_mb"] = sys_info.get("used", 0) // (1024 * 1024)
-        out["ram_total_mb"] = sys_info.get("total", 0) // (1024 * 1024)
-    except Exception:
-        pass
-    # 引擎忙碌率（8190 服务端滑动窗口真负载）优先；无则退回显存占比
-    busy = data.get("busy_pct")
-    if busy is not None:
-        out["util"] = min(100, int(round(busy)))
-    elif out["vram_total_mb"] > 0:
-        out["util"] = min(100, int(out["vram_used_mb"] * 100 // out["vram_total_mb"]))
+    if data is not None:
+        out["ok"] = True
+        out["online"] = True
+        out["latency_ms"] = round(latency, 1)
+        try:
+            devs = data.get("devices") or []
+            if devs:
+                d0 = devs[0]
+                out["device_name"] = d0.get("name", "N/A")
+                out["vram_used_mb"] = (d0.get("vram_total", 0) - d0.get("vram_free", 0)) // (1024 * 1024)
+                out["vram_total_mb"] = d0.get("vram_total", 0) // (1024 * 1024)
+        except Exception:
+            pass
+        try:
+            sys_info = data.get("system") or {}
+            out["ram_used_mb"] = sys_info.get("used", 0) // (1024 * 1024)
+            out["ram_total_mb"] = sys_info.get("total", 0) // (1024 * 1024)
+        except Exception:
+            pass
+    # 优先用系统直接读到的 Intel 核显真实利用率；无则退回 worker busy_pct
+    intel_util = _read_intel_gpu_util()
+    if intel_util is not None and intel_util > 0:
+        out["util"] = intel_util
+        out["online"] = True
+        out["ok"] = True
+    else:
+        busy = data.get("busy_pct") if data else None
+        if busy is not None:
+            out["util"] = min(100, int(round(busy)))
+        elif out["vram_total_mb"] > 0:
+            out["util"] = min(100, int(out["vram_used_mb"] * 100 // out["vram_total_mb"]))
     return out
 
 
