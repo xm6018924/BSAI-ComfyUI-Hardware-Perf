@@ -349,10 +349,44 @@
         });
 
         document.body.appendChild(panel);
-        // 初始定位沿用 CSS 的 right:16px（右上角），不在这里设 left——
-        // 启动阶段 innerWidth 可能未就绪（Comfy 启动页），此刻折算 left 会得到错误值（面板掉到屏外左侧）。
+        // 初始定位：运行按钮下方（ComfyUI 顶栏底部 + 8px）、右侧贴边靠紧（right 8px）。
+        // 不设 left（保持 CSS auto）——启动阶段 innerWidth 可能未就绪（Comfy 启动页），
+        // 此刻折算 left 会得到错误值（面板掉到屏外左侧）。
         // 真正的 left 折算放在用户第一次 pointerdown 时（见 header.pointerdown 兜底），
         // 那时页面已稳定、视口尺寸正确，面板会原位停留在右上，不会"点击一下吸到左边"。
+        (function applyInitPos() {
+            // 可靠探测 ComfyUI 顶栏底部（运行按钮下方）：优先按"运行/Run"按钮向上找容器，
+            // 其次按已知类名；两者都限制在视口上部 35% 内，避免 .comfyui-body 等整页容器被误命中。
+            const vh = window.innerHeight || 800;
+            const inTop = (r) => r.height > 4 && r.bottom > 0 && r.bottom < vh * 0.35;
+            let headerBottom = 76;                     // fallback：截图实测 ComfyUI 顶栏按钮底约 73px
+            try {
+                const runBtn = [...document.querySelectorAll("button")]
+                    .find(b => { const t = (b.textContent || "").trim(); return t === "运行" || t === "Run"; });
+                if (runBtn) {
+                    let el = runBtn;
+                    for (let i = 0; i < 5 && el; i++) {
+                        el = el.parentElement;
+                        if (!el) continue;
+                        const r = el.getBoundingClientRect();
+                        if (inTop(r)) { headerBottom = r.bottom; break; }
+                    }
+                    if (!inTop({ height: 21, bottom: headerBottom })) {
+                        const rb = runBtn.getBoundingClientRect();
+                        if (rb.bottom > 0) headerBottom = rb.bottom + 4;
+                    }
+                } else {
+                    for (const sel of [".comfyui-header", ".comfyui-menu", ".toolbar", "header"]) {
+                        const el = document.querySelector(sel);
+                        if (!el) continue;
+                        const r = el.getBoundingClientRect();
+                        if (inTop(r)) { headerBottom = r.bottom; break; }
+                    }
+                }
+            } catch (e) { /* 保持 fallback */ }
+            panel.style.top = (headerBottom + 8) + "px"; // 运行按钮下方，贴紧
+            panel.style.right = "8px";                   // 右侧贴边靠紧
+        })();
     }
 
     // ---------------- 数据渲染 ----------------
