@@ -162,18 +162,24 @@ def collect_xpu_worker():
             out["ram_total_mb"] = sys_info.get("total", 0) // (1024 * 1024)
         except Exception:
             pass
-    # 优先用系统直接读到的 Intel 核显真实利用率；无则退回 worker busy_pct
+    # 合并两个利用率源：Intel 核显系统计数器 + 8190 worker busy_pct
+    # 指针取最大值（谁忙谁驱动），两个数值都保留给前端子文本展示
     intel_util = _read_intel_gpu_util()
-    if intel_util is not None and intel_util > 0:
-        out["util"] = intel_util
+    worker_busy = 0
+    try:
+        if data:
+            worker_busy = int(round(float(data.get("busy_pct", 0) or 0)))
+    except Exception:
+        worker_busy = 0
+    out["intel_util"] = intel_util
+    out["worker_busy"] = worker_busy
+    needle = max(intel_util or 0, worker_busy)
+    if needle > 0:
+        out["util"] = min(100, needle)
         out["online"] = True
         out["ok"] = True
-    else:
-        busy = data.get("busy_pct") if data else None
-        if busy is not None:
-            out["util"] = min(100, int(round(busy)))
-        elif out["vram_total_mb"] > 0:
-            out["util"] = min(100, int(out["vram_used_mb"] * 100 // out["vram_total_mb"]))
+    elif out["vram_total_mb"] > 0:
+        out["util"] = min(100, int(out["vram_used_mb"] * 100 // out["vram_total_mb"]))
     return out
 
 

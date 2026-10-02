@@ -492,7 +492,7 @@
 
         setGaugeValue("gpu0", g0.util || 0,
             g0.online ? `${g0.util}%` : "N/A",
-            g0.online ? `VAE decode · 引擎负载 · ${g0.vram_used_mb}MB` : "XPU worker 未启动",
+            g0.online ? `核显 ${g0.intel_util ?? 0}% · VAE ${g0.worker_busy ?? 0}% · ${g0.vram_used_mb}MB` : "XPU worker 未启动",
             g0.online);
 
         setGaugeValue("npu", np.util || 0,
