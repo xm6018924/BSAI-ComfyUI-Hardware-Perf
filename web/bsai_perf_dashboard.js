@@ -255,9 +255,10 @@
 
         header.addEventListener("pointerdown", (e) => {
             if (e.button !== 0 || e.target.tagName === "BUTTON") return;  // 仅左键拖动；右键留给透明度菜单
-            // 记录拖拽前是否贴边（用视觉位置判断，不依赖 inline style）
+            // 记录拖拽前是否真正贴边（inline style 为 left:0 或 right:0），而非仅视觉靠近
             const preRect = panel.getBoundingClientRect();
-            const wasDocked = preRect.left < 80 || preRect.right > window.innerWidth - 80;
+            const trulyDocked = (panel.style.left === "0" || panel.style.right === "0");
+            const wasDocked = trulyDocked;
             // 拖拽前：先把当前视觉位置换算成 left/top，清除 bottom/right 贴边约束
             const rect = preRect;
             panel.style.right = "auto";
