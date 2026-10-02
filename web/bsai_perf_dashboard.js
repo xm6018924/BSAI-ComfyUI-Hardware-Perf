@@ -288,11 +288,23 @@
                 panel.style.borderRadius = "12px";
                 panel.style.borderRight = "";
                 panel.style.borderLeft = "";
+                panel.style.borderBottom = "";
+                panel.style.bottom = "auto";
+                panel.style.top = "80px";
                 panel.style.width = "auto";
+                panel.style.maxWidth = "680px";
+                panel.style.transform = "";
+                panel.style.left = "0px";
+                // 横版居中（下一帧测量实际宽度后修正 left）
+                requestAnimationFrame(() => {
+                    const w = panel.offsetWidth;
+                    panel.style.left = Math.max(8, (window.innerWidth - w) / 2) + "px";
+                });
                 panel.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
             } else {
                 panel.classList.add("bsai-layout-v");
                 panel.classList.remove("bsai-layout-h");
+                panel.style.maxWidth = "none";
                 panel.style.width = "150px";
                 panel.style.borderRadius = "12px";
                 panel.style.borderRight = "";
@@ -302,6 +314,8 @@
                 if (dock) {
                     panel.style.left = "auto";
                     panel.style.right = "auto";
+                    panel.style.bottom = "auto";
+                    panel.style.top = "auto";
                     if (side === "left") {
                         panel.style.left = "0";
                         panel.style.borderRadius = "0 12px 12px 0";
@@ -309,9 +323,11 @@
                         panel.style.boxShadow = "4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
                     } else {
                         panel.style.right = "0";
-                        panel.style.borderRadius = "12px 0 0 12px";
+                        panel.style.bottom = "44px";
+                        panel.style.borderRadius = "12px 0 0 0";
                         panel.style.borderRight = "none";
-                        panel.style.boxShadow = "-4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
+                        panel.style.borderBottom = "none";
+                        panel.style.boxShadow = "-4px -4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
                     }
                 } else {
                     // 菜单切换竖版：保持当前位置，不吸附
