@@ -228,7 +228,7 @@
             }
             panel.style.transform = "";      // 收起合成层位移，转回 left/top 定位（就地悬停）
             panel.classList.remove("bsai-dragging");
-            panel.style.width = "auto";      // 恢复内容自适应宽度
+            // 宽度恢复放在 autoDock 之后（autoDock 可能切换布局）
             pendingDrag = null;
             dragState = null;
             // 透明度 0 时：拖动中不隐藏（避免"拖一下面板就消失"）；松手后按鼠标实际位置定夺——
@@ -245,6 +245,12 @@
             window.removeEventListener("pointerup", endDrag);
             window.removeEventListener("pointercancel", endDrag);
             autoDock(wasDocked);
+            // autoDock 后按最终布局恢复宽度
+            if (layoutMode === "vertical") {
+                panel.style.width = "150px";
+            } else {
+                panel.style.width = "auto";
+            }
         }
 
         header.addEventListener("pointerdown", (e) => {
