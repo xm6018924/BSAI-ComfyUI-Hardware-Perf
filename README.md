@@ -98,6 +98,40 @@ The HUD polls the built-in `GET /bsai/perf` endpoint every 0.5 s (served by `nod
 
 ---
 
+## 面板交互操作指南 / Panel Interaction Guide
+
+### 布局模式 / Layout Modes
+
+| 操作 / Action | 效果 / Result |
+|---|---|
+| **竖版贴边** / Vertical docked | 5 个仪表盘纵向排列，吸附在画布左/右边缘，弧形外贴边 |
+| **横版悬浮** / Horizontal floating | 5 个仪表盘横向排列，居中悬浮在画布上，全圆角 |
+
+### 鼠标拖拽行为 / Drag Behavior
+
+| 场景 / Scenario | 行为 / Behavior |
+|---|---|
+| 默认打开 | 竖版吸附在画布右侧 / Vertical docked on right edge |
+| 按住标题栏拖动到左右边缘 (<80px) | 自动吸附到对应边，竖版排列 / Auto-docks to that edge, vertical layout |
+| 从贴边位置拖到画布中间 | 自动切换为横版悬浮 / Auto-switches to horizontal when dropped in center |
+| 在画布中间拖动 | 保持当前布局，不强制切换 / Stays in current layout, no forced switch |
+| 贴边后上下拖动 | 保持贴边位置，不弹到另一边 / Stays docked on same edge |
+
+### 右键菜单 / Right-Click Menu
+
+| 选项 / Option | 说明 / Description |
+|---|---|
+| **竖版 / Vertical** | 切换为纵向排列，不移动位置 / Switch to vertical stack, keeps current position |
+| **横版 / Horizontal** | 切换为横向排列，不移动位置 / Switch to horizontal row, keeps current position |
+| **面板透明度 / Opacity** | 0–100% 滑块，只影响背景板，仪表盘内容始终全亮 / Slider affects panel background only, gauges stay fully bright |
+
+### 快捷键 / Buttons
+
+- **—** 折叠/展开仪表盘 / Collapse/expand gauges
+- **×** 关闭面板 / Close panel（刷新页面后重新出现 / Reappears on refresh）
+
+---
+
 ## License
 
 MIT

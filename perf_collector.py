@@ -9,6 +9,7 @@ Intel NPU(8191)、CPU/内存 的实时性能参数，供前端仪表盘轮询。
 """
 
 import json
+import os
 import time
 import urllib.request
 
@@ -130,24 +131,56 @@ def collect_xpu_worker():
 # ---------------------------------------------------------------------------
 # Intel NPU（8191 人脸检测/增强服务）
 # ---------------------------------------------------------------------------
-def collect_npu():
-    """NPU 状态：读取 BSAI-ComfyUI-FaceRefine 的 NPU 运行标志。
+_NPU_HW_CHECKED = False
+_NPU_HW_OK = False
 
-    历史实现曾向 http://127.0.0.1:8191/health 发起 HTTP 自请求 —— 该端点
-    并不存在，且同步请求发生在 asyncio 事件循环内，会造成整个 server 卡死。
-    这里改为直接读 FaceRefine 插件模块级标志（无网络、无阻塞），
-    未安装/未启用时诚实返回 offline。
+
+def _npu_hw_ok():
+    """NPU 硬件在位探测（本进程 openvino，一次性，无网络无阻塞）"""
+    global _NPU_HW_CHECKED, _NPU_HW_OK
+    if not _NPU_HW_CHECKED:
+        try:
+            import openvino
+            _NPU_HW_OK = "NPU" in openvino.Core().available_devices
+        except Exception:
+            _NPU_HW_OK = False
+        _NPU_HW_CHECKED = True
+    return _NPU_HW_OK
+
+
+def collect_npu():
+    """NPU 状态：硬件在位 + 服务插件加载 + FaceRefine 使用标志，三路合一。
+
+    不做同步 HTTP 自请求（asyncio 事件循环内会卡死 server）；
+    本进程探测无网络、无阻塞，NPU 服务在线即如实上报 online。
     """
     out = {"ok": False, "online": False, "util": 0, "models": 0,
            "latency_ms": 0, "device_name": "Intel AI Boost NPU"}
     try:
-        import BSAI_ComfyUI_FaceRefine.nodes as _fr_nodes
-        _hfr = getattr(_fr_nodes, "_HFR_MOD", None)
-        enabled = bool(getattr(_hfr, "_NPU_FACE_DETECT", False))
+        hw = _npu_hw_ok()
+        svc_ok = False
+        try:
+            import importlib
+            _npu_mod = importlib.import_module("custom_nodes.BSAI-NPU-Service")
+            _svc = getattr(_npu_mod, "_svc", None)
+            svc_ok = _svc is not None and getattr(_svc, "device", "") == "NPU"
+        except Exception:
+            pass
+        enabled = False
+        try:
+            import BSAI_ComfyUI_FaceRefine.nodes as _fr_nodes
+            enabled = bool(getattr(getattr(_fr_nodes, "_HFR_MOD", None),
+                                   "_NPU_FACE_DETECT", False))
+        except Exception:
+            pass
+        online = hw and (svc_ok or enabled)
         out["ok"] = True
-        out["online"] = enabled
-        out["util"] = 10 if enabled else 0
-        out["models"] = 8 if enabled else 0
+        out["online"] = online
+        out["util"] = 10 if online else 0
+        out["models"] = 8 if online else 0
+        out["device_name"] = "Intel AI Boost NPU"
+        out["mode"] = ("hw+svc" if (hw and svc_ok)
+                       else ("face-refine" if enabled else "off"))
     except Exception:
         pass
     return out
@@ -226,6 +259,36 @@ def collect_uptime():
 
 
 # ---------------------------------------------------------------------------
+# 编排层信号（双水位策略 / 资源租约 / 优先级队列）
+# ---------------------------------------------------------------------------
+def collect_orchestrator():
+    """编排层状态：读 BSAI-ComfyUI-Orchestrator 状态文件（无网络、无锁等待）。"""
+    out = {"ok": False, "xpu_offload_min_vram": 2500, "cuda_reserve_mb": 750,
+           "leases": {}, "queue": {"running": 0, "waiting": 0}}
+    try:
+        state_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "..", "user", "bsai_orchestrator_state.json")
+        with open(state_path, "r", encoding="utf-8") as f:
+            st = json.load(f)
+        policy = st.get("policy", {})
+        out["ok"] = True
+        out["xpu_offload_min_vram"] = policy.get("xpu_offload_min_vram", 2500)
+        out["cuda_reserve_mb"] = policy.get("cuda_reserve_mb", 750)
+        out["leases"] = {k: {"holder": v.get("holder"), "pid": v.get("pid"),
+                             "ttl": v.get("ttl")}
+                         for k, v in st.get("leases", {}).items()}
+        tasks = st.get("tasks", [])
+        out["queue"] = {
+            "running": sum(1 for t in tasks if t.get("status") == "running"),
+            "waiting": sum(1 for t in tasks if t.get("status") == "waiting"),
+        }
+    except Exception:
+        pass
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 def collect_all():
@@ -237,6 +300,7 @@ def collect_all():
         "cpu": collect_cpu(),              # CPU / 内存
         "main": collect_main_vram(),       # 主进程显存水位
         "proc": collect_uptime(),          # 主进程自身占用
+        "orch": collect_orchestrator(),    # 编排层：双水位/租约/队列
     }
 
 

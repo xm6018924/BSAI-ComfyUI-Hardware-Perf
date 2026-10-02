@@ -220,6 +220,7 @@
 
         function endDrag(e) {
             if (!dragState) return;
+            const wasDocked = dragState.wasDocked;
             if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
             if (pendingDrag) {
                 panel.style.left = pendingDrag.left + "px";
@@ -243,14 +244,18 @@
             window.removeEventListener("pointermove", onDragMove);
             window.removeEventListener("pointerup", endDrag);
             window.removeEventListener("pointercancel", endDrag);
+            autoDock(wasDocked);
         }
 
         header.addEventListener("pointerdown", (e) => {
             if (e.button !== 0 || e.target.tagName === "BUTTON") return;  // 仅左键拖动；右键留给透明度菜单
-            panel.style.right = "auto";      // 恢复自由定位（left 折算兜底见下，不会跳位）
-            if (!panel.style.left) {         // 异常路径兜底：任何情况下都保证有明确 left
-                panel.style.left = (window.innerWidth - panel.offsetWidth - 16) + "px";
-            }
+            // 记录拖拽前是否贴边（用视觉位置判断，不依赖 inline style）
+            const preRect = panel.getBoundingClientRect();
+            const wasDocked = preRect.left < 80 || preRect.right > window.innerWidth - 80;
+            // 拖拽前：先把当前视觉位置换算成 left，避免 right=auto 后面板跳到左侧
+            const rect = preRect;
+            panel.style.right = "auto";
+            panel.style.left = rect.left + "px";
             dragState = {
                 dx: e.clientX - panel.offsetLeft,
                 dy: e.clientY - panel.offsetTop,
@@ -258,6 +263,7 @@
                 baseTop: panel.offsetTop,
                 w: panel.offsetWidth,         // 尺寸缓存，避免反复 reflow
                 h: panel.offsetHeight,
+                wasDocked: wasDocked,
             };
             panel.style.width = dragState.w + "px";  // 锁定宽度，防止右缘拖动被压缩
             panel.classList.add("bsai-dragging");    // 禁用 backdrop-filter / transition
@@ -270,7 +276,66 @@
 
         // ---------------- 右键透明度菜单（0~100：只作用于背景板，仪表盘始终全亮） ----------------
         let opacityVal = 100;
+        let layoutMode = "vertical";  // vertical=贴边竖版, horizontal=悬浮横版
         let opMenu = null;
+
+        // 布局切换：vertical（竖列）/ horizontal（横排）；dock=true 时吸附到边缘
+        function applyLayout(mode, side, dock) {
+            layoutMode = mode;
+            if (mode === "horizontal") {
+                panel.classList.add("bsai-layout-h");
+                panel.classList.remove("bsai-layout-v");
+                panel.style.borderRadius = "12px";
+                panel.style.borderRight = "";
+                panel.style.borderLeft = "";
+                panel.style.width = "auto";
+                panel.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
+            } else {
+                panel.classList.add("bsai-layout-v");
+                panel.classList.remove("bsai-layout-h");
+                panel.style.width = "150px";
+                panel.style.borderRadius = "12px";
+                panel.style.borderRight = "";
+                panel.style.borderLeft = "";
+                panel.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
+                // 只有 dock=true 时才吸附贴边
+                if (dock) {
+                    panel.style.left = "auto";
+                    panel.style.right = "auto";
+                    if (side === "left") {
+                        panel.style.left = "0";
+                        panel.style.borderRadius = "0 12px 12px 0";
+                        panel.style.borderLeft = "none";
+                        panel.style.boxShadow = "4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
+                    } else {
+                        panel.style.right = "0";
+                        panel.style.borderRadius = "12px 0 0 12px";
+                        panel.style.borderRight = "none";
+                        panel.style.boxShadow = "-4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
+                    }
+                } else {
+                    // 菜单切换竖版：保持当前位置，不吸附
+                    if (!panel.style.left && !panel.style.right) {
+                        panel.style.right = "8px";
+                    }
+                }
+            }
+        }
+
+        // 拖动结束后：距边 <80px 吸附；从贴边拖到中间则自动横版
+        function autoDock(wasDocked) {
+            const r = panel.getBoundingClientRect();
+            const vw = window.innerWidth;
+            if (r.left < 80) {
+                applyLayout("vertical", "left", true);
+            } else if (r.right > vw - 80) {
+                applyLayout("vertical", "right", true);
+            } else if (wasDocked) {
+                // 从贴边拖到中间 → 自动横版
+                applyLayout("horizontal", null, false);
+            }
+            // 已经是中间悬浮：保持当前布局
+        }
 
         // 透明度只对"背景板"有效：背景色/边框/阴影/blur 随透明度缩放；
         // 仪表盘内容（指针/刻度/数值/标签）始终保持全亮。透明度 0 = 背景板完全透明（画布全可见）。
@@ -307,7 +372,15 @@
             opMenu = document.createElement("div");
             opMenu.id = "bsai-perf-opmenu";
             opMenu.innerHTML = `
-              <div class="bsai-op-title">面板透明度</div>
+              <div class="bsai-op-title">BSAI 仪表盘</div>
+              <div class="bsai-op-row" style="margin-bottom:8px">
+                <span style="font-size:11px;color:${THEME.sub}">布局</span>
+                <span class="bsai-op-presets">
+                  <button data-layout="vertical" class="${layoutMode==='vertical'?'active':''}">竖版</button>
+                  <button data-layout="horizontal" class="${layoutMode==='horizontal'?'active':''}">横版</button>
+                </span>
+              </div>
+              <div class="bsai-op-title" style="margin-bottom:4px">面板透明度</div>
               <input id="bsai-op-range" type="range" min="0" max="100" step="5" value="${opacityVal}">
               <div class="bsai-op-row">
                 <span id="bsai-op-val">${opacityVal}%</span>
@@ -320,8 +393,19 @@
             opMenu.style.top = Math.max(4, Math.min(y, window.innerHeight - 130)) + "px";
             document.body.appendChild(opMenu);
             opMenu.querySelector("#bsai-op-range").addEventListener("input", (e) => applyOpacity(parseInt(e.target.value, 10)));
-            opMenu.querySelectorAll(".bsai-op-presets button").forEach(b =>
+            opMenu.querySelectorAll(".bsai-op-presets button[data-v]").forEach(b =>
                 b.addEventListener("click", (e) => { e.stopPropagation(); applyOpacity(parseInt(b.dataset.v, 10)); }));
+            opMenu.querySelectorAll(".bsai-op-presets button[data-layout]").forEach(b =>
+                b.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const m = b.dataset.layout;
+                    if (m === "horizontal") {
+                        applyLayout("horizontal", null, false);
+                    } else {
+                        applyLayout("vertical", "right", false);
+                    }
+                    closeOpMenu();
+                }));
             opMenu.addEventListener("pointerdown", (e) => e.stopPropagation());
             document.addEventListener("pointerdown", onDocPointerDown);
         }
@@ -385,7 +469,7 @@
                 }
             } catch (e) { /* 保持 fallback */ }
             panel.style.top = (headerBottom + 8) + "px"; // 运行按钮下方，贴紧
-            panel.style.right = "8px";                   // 右侧贴边靠紧
+            panel.style.right = "0";                   // 右侧贴边（无空隙，弧形左缘）
         })();
     }
 
@@ -466,30 +550,31 @@
     style.textContent = `
       #bsai-perf-panel {
         position: fixed;
-        top: 16px;
-        right: 16px;
+        top: 76px;
+        right: 0;
         z-index: 99999;
         background: ${THEME.panelBg};
         border: 1px solid ${THEME.panelBorder};
-        border-radius: 12px;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 18px ${THEME.glow};
+        border-right: none;
+        border-radius: 12px 0 0 12px;
+        box-shadow: -4px 4px 24px rgba(0,0,0,0.5), 0 0 18px ${THEME.glow};
         backdrop-filter: blur(8px);
         font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
         color: ${THEME.text};
         user-select: none;
-        min-width: 300px;
-        max-width: 640px;
+        width: 150px;
       }
       #bsai-perf-panel .bsai-perf-header {
-        display: flex; align-items: center; gap: 8px;
-        padding: 8px 12px;
+        display: flex; align-items: center; gap: 6px;
+        padding: 6px 8px;
         cursor: move;
         border-bottom: 1px solid rgba(255,255,255,0.08);
       }
       #bsai-perf-panel .bsai-perf-title {
-        font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
         background: linear-gradient(90deg, #4db8ff, #a06fff);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        flex: 1; white-space: nowrap;
       }
       #bsai-perf-panel .bsai-perf-led {
         width: 8px; height: 8px; border-radius: 50%;
@@ -503,11 +588,17 @@
       }
       #bsai-perf-panel .bsai-perf-btn:hover { background: rgba(255,255,255,0.2); }
       #bsai-perf-panel .bsai-perf-body {
-        display: flex; flex-wrap: wrap; gap: 6px; padding: 10px;
+        display: flex; flex-direction: column; gap: 4px; padding: 8px 6px;
+        align-items: center;
+      }
+      /* 横版模式：横排一行 */
+      #bsai-perf-panel.bsai-layout-h .bsai-perf-body {
+        flex-direction: row; flex-wrap: wrap; gap: 6px; padding: 10px;
         justify-content: center;
       }
+      #bsai-perf-panel.bsai-layout-h { width: auto !important; }
       #bsai-perf-panel .bsai-gauge {
-        width: 118px; text-align: center; opacity: 1;
+        width: 120px; text-align: center; opacity: 1;
         transition: opacity 0.3s;
       }
       #bsai-perf-panel .bsai-gauge-svg-wrap { line-height: 0; }
@@ -532,15 +623,16 @@
         font-size: 11px; font-weight: 600; margin-top: 2px; color: ${THEME.text};
       }
       #bsai-perf-panel .bsai-gauge-sub {
-        font-size: 9.5px; color: ${THEME.sub}; margin-top: 1px;
-        font-family: Consolas, monospace; white-space: nowrap; overflow: hidden;
-        text-overflow: ellipsis;
+        font-size: 8.5px; color: ${THEME.sub}; margin-top: 1px;
+        font-family: Consolas, monospace; white-space: normal; line-height: 1.3;
+        word-break: break-all;
       }
       #bsai-perf-panel .bsai-perf-footer {
         flex-basis: 100%; text-align: center;
-        font-size: 10px; color: ${THEME.sub}; padding-top: 4px;
+        font-size: 9px; color: ${THEME.sub}; padding: 4px 2px 6px;
         border-top: 1px dashed rgba(255,255,255,0.1);
         font-family: Consolas, monospace;
+        white-space: normal; line-height: 1.4;
       }
       /* 右键透明度菜单 */
       #bsai-perf-opmenu {
@@ -574,6 +666,9 @@
         border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer; line-height: 1.3;
       }
       #bsai-perf-opmenu .bsai-op-presets button:hover { background: rgba(120,160,255,0.35); }
+      #bsai-perf-opmenu .bsai-op-presets button.active {
+        background: rgba(77,184,255,0.45); color: #fff; font-weight: 700;
+      }
     `;
     document.head.appendChild(style);
 
