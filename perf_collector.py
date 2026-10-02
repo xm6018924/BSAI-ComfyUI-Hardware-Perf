@@ -158,10 +158,103 @@ def _gpu_engine_poller():
                 out.append(s)
         return out
 
+    def _shared_by_luid():
+        """枚举 GPU Process Memory 的 Shared Usage，按 LUID 聚合（GB）。"""
+        obj = "GPU Process Memory"
+        cch_c = wintypes.DWORD(0)
+        cch_i = wintypes.DWORD(0)
+        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
+                                None, ctypes.byref(cch_i), 0, 0)
+        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
+        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
+        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
+                                      ib, ctypes.byref(cch_i), 0, 0)
+        if ret not in (0, PDH_MORE_DATA):
+            return {}
+        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
+        insts = [s for s in data.decode("utf-16-le", errors="ignore").split("\0") if s]
+        if not insts or "Shared Usage" not in cb.value:
+            return {}
+        hq = ctypes.c_void_p()
+        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
+            return {}
+        subs = []
+        for inst in insts:
+            hc = ctypes.c_void_p()
+            if pdh.PdhAddEnglishCounterW(hq, "\\GPU Process Memory(" + inst + ")\\Shared Usage",
+                                         0, ctypes.byref(hc)) == 0:
+                subs.append((inst, hc))
+        agg = {}
+        if subs:
+            pdh.PdhCollectQueryData(hq)
+            time.sleep(1.0)
+            if pdh.PdhCollectQueryData(hq) == 0:
+                for inst, hc in subs:
+                    vt = wintypes.DWORD()
+                    v = _FmtVal()
+                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
+                    if v.CStatus == 0 and v.value > 0:
+                        idx = inst.lower().find("luid_0x")
+                        lid = inst[idx:inst.find("_phys_", idx)] if idx >= 0 else inst
+                        agg[lid] = agg.get(lid, 0.0) + v.value
+        pdh.PdhCloseQuery(hq)
+        return {k: val / (1024 ** 3) for k, val in agg.items()}
+
+    # 动态 LUID 识别缓存：{"intel": "0x00014e41", "nvidia": "0x0001674a"}
+    luids = {}
+    luids_ts = 0.0
+
+    def identify_luids():
+        """动态识别核显/5090 的 LUID（会话/驱动重启后 LUID 会漂移，必须动态）。
+        特征：核显共享显存大；5090 专用 GPU 共享显存小；纯软件适配器共享≈0 且 3D 实例极多。
+        启动时识别 + 每 60s 刷新 + 采样失配时即时刷新。"""
+        nonlocal luids, luids_ts
+        now = time.time()
+        if luids and now - luids_ts < 60:
+            return luids
+        try:
+            insts3 = _enum_3d()
+            by_luid = {}
+            for name in insts3:
+                idx = name.lower().find("luid_0x")
+                lid = name[idx:name.find("_phys_", idx)] if idx >= 0 else name
+                by_luid[lid] = by_luid.get(lid, 0) + 1
+            if not by_luid:
+                return luids
+            shared = _shared_by_luid()
+            # 过滤纯软件/虚拟适配器：3D 实例 >=100 且共享显存 <0.01GB
+            real = {lid: (cnt, shared.get(lid, 0.0))
+                    for lid, cnt in by_luid.items()
+                    if not (cnt >= 100 and shared.get(lid, 0.0) < 0.01)}
+            if not real:
+                real = {lid: (cnt, shared.get(lid, 0.0)) for lid, cnt in by_luid.items()}
+            if len(real) < 2:
+                # 单候选：无法区分，5090 按 3D 实例少，核显留空（HUD 显示 N/A）
+                nvidia = min(real, key=lambda l: (real[l][0], real[l][1]))
+                luids = {"intel": None, "nvidia": nvidia.split("_")[-1]}
+            else:
+                # 5090 = 共享显存最小；核显 = 共享显存最大
+                nvidia = min(real, key=lambda l: real[l][1])
+                intel = max(real, key=lambda l: real[l][1])
+                if nvidia == intel:  # 兜底：按 3D 实例数分
+                    nvidia = min(real, key=lambda l: real[l][0])
+                    intel = max(real, key=lambda l: real[l][0])
+                luids = {"intel": intel.split("_")[-1], "nvidia": nvidia.split("_")[-1]}
+            luids_ts = now
+            print("[BSAI-Perf] GPU LUID 动态识别:", luids, "| real=",
+                  {k: (v[0], round(v[1], 2)) for k, v in real.items()})
+        except Exception:
+            pass
+        return luids
+
     while True:
         try:
             insts = _enum_3d()
             if not insts:
+                time.sleep(1)
+                continue
+            cur = identify_luids()
+            if not cur.get("intel") and not cur.get("nvidia"):
                 time.sleep(1)
                 continue
             hq = ctypes.c_void_p()
@@ -179,16 +272,24 @@ def _gpu_engine_poller():
             if pdh.PdhCollectQueryData(hq) == 0:
                 intel_mx = 0.0
                 nv_mx = 0.0
+                matched = {"intel": 0, "nvidia": 0}
                 for name, hc in counters:
                     vt = wintypes.DWORD()
                     v = _FmtVal()
                     pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
                     if v.CStatus == 0:
                         low = name.lower()
-                        if "0x00014731" in low:
+                        if cur.get("intel") and cur["intel"] in low:
                             intel_mx = max(intel_mx, v.value)
-                        elif "0x00015d8b" in low:
+                            matched["intel"] += 1
+                        elif cur.get("nvidia") and cur["nvidia"] in low:
                             nv_mx = max(nv_mx, v.value)
+                            matched["nvidia"] += 1
+                # LUID 漂移自愈：本轮回合都没有命中则强制刷新识别
+                if cur.get("intel") and not cur.get("nvidia") and matched["nvidia"] == 0:
+                    luids_ts = 0.0
+                elif cur.get("nvidia") and matched["nvidia"] == 0 and matched["intel"] == 0:
+                    luids_ts = 0.0
                 with _INTEL_UTIL_LOCK:
                     global _INTEL_UTIL_CACHE
                     _INTEL_UTIL_CACHE = max(0, min(100, intel_mx))
