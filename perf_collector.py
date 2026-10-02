@@ -109,8 +109,8 @@ def _intel_gpu_poller():
         "-ErrorAction SilentlyContinue | "
         "Select-Object -ExpandProperty CounterSamples | "
         "Where-Object {$_.InstanceName -like '*luid_0x00014731*' -and $_.CookedValue -gt 0} | "
-        "Measure-Object CookedValue -Average | "
-        "Select-Object -ExpandProperty Average"
+        "Measure-Object CookedValue -Maximum | "
+        "Select-Object -ExpandProperty Maximum"
     )
     while True:
         try:
