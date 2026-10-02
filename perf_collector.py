@@ -62,7 +62,9 @@ def collect_gpu_nvidia():
             power, power_max = 0.0, 0.0
         out.update({
             "ok": True, "name": _NVML_NAME,
-            "util": int(util.gpu), "mem_used_mb": mem.used // (1024 * 1024),
+            # 利用率用 GPU Engine 计数器（与任务管理器 GPU1 同源），pynvml 仅作参考值
+            "util": _read_nvidia_gpu_util(),
+            "nvml_util": int(util.gpu), "mem_used_mb": mem.used // (1024 * 1024),
             "mem_total_mb": mem.total // (1024 * 1024),
             "temp_c": int(temp), "power_w": round(power, 1), "power_max_w": round(power_max, 1),
         })
@@ -102,33 +104,110 @@ _INTEL_UTIL_CACHE = 0.0
 _INTEL_UTIL_LOCK = threading.Lock()
 
 
-def _intel_gpu_poller():
-    """后台线程：每 2 秒读一次 Intel 核显 GPU 利用率，写入缓存。"""
-    ps = (
-        "Get-Counter '\\GPU Engine(*)\\Utilization Percentage' "
-        "-ErrorAction SilentlyContinue | "
-        "Select-Object -ExpandProperty CounterSamples | "
-        "Where-Object {$_.InstanceName -like '*luid_0x00014731*' -and $_.CookedValue -gt 0} | "
-        "Measure-Object CookedValue -Maximum | "
-        "Select-Object -ExpandProperty Maximum"
-    )
+_NVIDIA_UTIL_CACHE = 0.0
+_NVIDIA_UTIL_LOCK = threading.Lock()
+
+
+def _gpu_engine_poller():
+    """PDH 直读：Python 内订阅 GPU Engine 3D 计数器（与任务管理器 GPU0/GPU1 同源），
+    秒级刷新核显/5090 利用率缓存。实例动态变化，每轮重枚举重订阅。"""
+    import ctypes
+    from ctypes import wintypes
+
+    pdh = ctypes.WinDLL("pdh.dll", use_last_error=True)
+    PDH_FMT_DOUBLE = 0x00000200
+    PDH_MORE_DATA = 0x800007D2
+
+    pdh.PdhEnumObjectItemsW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                        wintypes.LPWSTR, wintypes.LPDWORD, wintypes.LPWSTR,
+                                        wintypes.LPDWORD, wintypes.DWORD, wintypes.DWORD]
+    pdh.PdhEnumObjectItemsW.restype = wintypes.LONG
+    pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhOpenQueryW.restype = wintypes.LONG
+    pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.DWORD,
+                                          ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhAddEnglishCounterW.restype = wintypes.LONG
+    pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+    pdh.PdhCollectQueryData.restype = wintypes.LONG
+    pdh.PdhGetFormattedCounterValue.argtypes = [ctypes.c_void_p, wintypes.DWORD,
+                                                ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    pdh.PdhGetFormattedCounterValue.restype = wintypes.LONG
+    pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
+    pdh.PdhCloseQuery.restype = wintypes.LONG
+
+    class _FmtVal(ctypes.Structure):
+        _fields_ = [("CStatus", wintypes.DWORD), ("value", ctypes.c_double)]
+
+    def _enum_3d():
+        """枚举 GPU Engine 对象，返回全部 3D 引擎实例名。"""
+        obj = "GPU Engine"
+        cch_c = wintypes.DWORD(0)
+        cch_i = wintypes.DWORD(0)
+        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
+                                None, ctypes.byref(cch_i), 0, 0)
+        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
+        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
+        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
+                                      ib, ctypes.byref(cch_i), 0, 0)
+        if ret not in (0, PDH_MORE_DATA):
+            return []
+        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
+        out = []
+        for s in data.decode("utf-16-le", errors="ignore").split("\0"):
+            if s and "engtype_3d" in s.lower():
+                out.append(s)
+        return out
+
     while True:
         try:
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
-                capture_output=True, text=True, timeout=5,
-                creationflags=0x08000000,
-            )
-            v = float(r.stdout.strip() or 0)
-            with _INTEL_UTIL_LOCK:
-                global _INTEL_UTIL_CACHE
-                _INTEL_UTIL_CACHE = max(0, min(100, v))
+            insts = _enum_3d()
+            if not insts:
+                time.sleep(1)
+                continue
+            hq = ctypes.c_void_p()
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
+                time.sleep(1)
+                continue
+            counters = []
+            for name in insts:
+                hc = ctypes.c_void_p()
+                if pdh.PdhAddEnglishCounterW(hq, "\\GPU Engine(" + name + ")\\Utilization Percentage",
+                                             0, ctypes.byref(hc)) == 0:
+                    counters.append((name, hc))
+            pdh.PdhCollectQueryData(hq)  # 首次初始化
+            time.sleep(1.0)
+            if pdh.PdhCollectQueryData(hq) == 0:
+                intel_mx = 0.0
+                nv_mx = 0.0
+                for name, hc in counters:
+                    vt = wintypes.DWORD()
+                    v = _FmtVal()
+                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
+                    if v.CStatus == 0:
+                        low = name.lower()
+                        if "0x00014731" in low:
+                            intel_mx = max(intel_mx, v.value)
+                        elif "0x00015d8b" in low:
+                            nv_mx = max(nv_mx, v.value)
+                with _INTEL_UTIL_LOCK:
+                    global _INTEL_UTIL_CACHE
+                    _INTEL_UTIL_CACHE = max(0, min(100, intel_mx))
+                with _NVIDIA_UTIL_LOCK:
+                    global _NVIDIA_UTIL_CACHE
+                    _NVIDIA_UTIL_CACHE = max(0, min(100, nv_mx))
+            pdh.PdhCloseQuery(hq)
         except Exception:
             pass
-        time.sleep(2)
+        time.sleep(0.3)
 
 
-threading.Thread(target=_intel_gpu_poller, daemon=True).start()
+threading.Thread(target=_gpu_engine_poller, daemon=True).start()
+
+
+def _read_nvidia_gpu_util():
+    """返回缓存的 RTX 5090 利用率 (0-100)，与任务管理器 GPU1 同源。"""
+    with _NVIDIA_UTIL_LOCK:
+        return int(round(_NVIDIA_UTIL_CACHE))
 
 
 def _read_intel_gpu_util():
