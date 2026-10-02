@@ -173,7 +173,9 @@ def _gpu_engine_poller():
             return {}
         data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
         insts = [s for s in data.decode("utf-16-le", errors="ignore").split("\0") if s]
-        if not insts or "Shared Usage" not in cb.value:
+        data2 = ctypes.string_at(ctypes.addressof(cb), cb._length_ * 2)
+        counters = [s for s in data2.decode("utf-16-le", errors="ignore").split("\0") if s]
+        if not insts or "Shared Usage" not in counters:
             return {}
         hq = ctypes.c_void_p()
         if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
@@ -200,13 +202,61 @@ def _gpu_engine_poller():
         pdh.PdhCloseQuery(hq)
         return {k: val / (1024 ** 3) for k, val in agg.items()}
 
+    def _dedicated_by_luid():
+        """枚举 GPU Adapter Memory 的 Dedicated Usage，按 LUID 聚合（GB）。
+        决定性特征：RTX 5090 拥有 24GB 专用显存（Dedicated Usage ≈ 23GB），
+        核显/软件适配器/NPU 的 Dedicated ≈ 0。"""
+        obj = "GPU Adapter Memory"
+        cch_c = wintypes.DWORD(0)
+        cch_i = wintypes.DWORD(0)
+        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
+                                None, ctypes.byref(cch_i), 0, 0)
+        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
+        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
+        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
+                                      ib, ctypes.byref(cch_i), 0, 0)
+        if ret not in (0, PDH_MORE_DATA):
+            return {}
+        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
+        insts = [s for s in data.decode("utf-16-le", errors="ignore").split("\0") if s]
+        data2 = ctypes.string_at(ctypes.addressof(cb), cb._length_ * 2)
+        counters = [s for s in data2.decode("utf-16-le", errors="ignore").split("\0") if s]
+        if not insts or "Dedicated Usage" not in counters:
+            return {}
+        hq = ctypes.c_void_p()
+        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
+            return {}
+        subs = []
+        for inst in insts:
+            hc = ctypes.c_void_p()
+            if pdh.PdhAddEnglishCounterW(hq, "\\GPU Adapter Memory(" + inst + ")\\Dedicated Usage",
+                                         0, ctypes.byref(hc)) == 0:
+                subs.append((inst, hc))
+        agg = {}
+        if subs:
+            pdh.PdhCollectQueryData(hq)
+            time.sleep(1.0)
+            if pdh.PdhCollectQueryData(hq) == 0:
+                for inst, hc in subs:
+                    vt = wintypes.DWORD()
+                    v = _FmtVal()
+                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
+                    if v.CStatus == 0 and v.value > 0:
+                        idx = inst.lower().find("luid_0x")
+                        lid = inst[idx:inst.find("_phys_", idx)] if idx >= 0 else inst
+                        agg[lid] = agg.get(lid, 0.0) + v.value
+        pdh.PdhCloseQuery(hq)
+        return {k: val / (1024 ** 3) for k, val in agg.items()}
+
     # 动态 LUID 识别缓存：{"intel": "0x00014e41", "nvidia": "0x0001674a"}
     luids = {}
     luids_ts = 0.0
 
     def identify_luids():
         """动态识别核显/5090 的 LUID（会话/驱动重启后 LUID 会漂移，必须动态）。
-        特征：核显共享显存大；5090 专用 GPU 共享显存小；纯软件适配器共享≈0 且 3D 实例极多。
+        决定性特征（2026-10-03 实测）：RTX 5090 的 GPU Adapter Memory Dedicated Usage ≈ 23GB
+        （24GB 专用显存），其余适配器（核显/软件/NPU）Dedicated ≈ 0。
+        5090 = Dedicated 最大的 LUID；核显 = 剩余有 3D 引擎、排除纯软件适配器的 LUID。
         启动时识别 + 每 60s 刷新 + 采样失配时即时刷新。"""
         nonlocal luids, luids_ts
         now = time.time()
@@ -222,28 +272,37 @@ def _gpu_engine_poller():
             if not by_luid:
                 return luids
             shared = _shared_by_luid()
-            # 过滤纯软件/虚拟适配器：3D 实例 >=100 且共享显存 <0.01GB
-            real = {lid: (cnt, shared.get(lid, 0.0))
-                    for lid, cnt in by_luid.items()
-                    if not (cnt >= 100 and shared.get(lid, 0.0) < 0.01)}
-            if not real:
-                real = {lid: (cnt, shared.get(lid, 0.0)) for lid, cnt in by_luid.items()}
-            if len(real) < 2:
-                # 单候选：无法区分，5090 按 3D 实例少，核显留空（HUD 显示 N/A）
-                nvidia = min(real, key=lambda l: (real[l][0], real[l][1]))
-                luids = {"intel": None, "nvidia": nvidia.split("_")[-1].lower()}
-            else:
-                # 5090 = 共享显存最小；核显 = 共享显存最大
-                nvidia = min(real, key=lambda l: real[l][1])
-                intel = max(real, key=lambda l: real[l][1])
-                if nvidia == intel:  # 兜底：按 3D 实例数分
-                    nvidia = min(real, key=lambda l: real[l][0])
-                    intel = max(real, key=lambda l: real[l][0])
-                luids = {"intel": intel.split("_")[-1].lower(),
-                         "nvidia": nvidia.split("_")[-1].lower()}
+            ded = _dedicated_by_luid()
+            nvidia = None
+            # 5090 = Dedicated 专用显存最大（>1GB 才是独显，防 0 值干扰）
+            ded_gt1 = {lid: v for lid, v in ded.items() if v > 1.0}
+            if ded_gt1:
+                nvidia = max(ded_gt1, key=lambda l: ded_gt1[l])
+            # 核显候选 = 有 3D 引擎的 LUID，排除 5090 与纯软件适配器（3D 实例>=100 且无显存）
+            candidates = []
+            for lid, cnt in by_luid.items():
+                if lid == nvidia:
+                    continue
+                d = ded.get(lid, 0.0)
+                s = shared.get(lid, 0.0)
+                if cnt >= 100 and d < 0.01 and s < 0.01:
+                    continue  # 纯软件/基础显示适配器（如 WARP）
+                candidates.append((lid, cnt, d, s))
+            if nvidia is None and candidates:
+                # 兜底（Dedicated 探测失败）：5090 = 共享显存最小的候选
+                nvidia = min(candidates, key=lambda c: c[3])[0]
+            intel = None
+            if candidates:
+                # 核显 = 剩余候选中共享显存最大（独显已排除；软件已排除）
+                intel = max(candidates, key=lambda c: c[3])[0]
+            if nvidia is None and intel is None:
+                return luids
+            luids = {"intel": (intel.split("_")[-1].lower() if intel else None),
+                     "nvidia": (nvidia.split("_")[-1].lower() if nvidia else None)}
             luids_ts = now
-            print("[BSAI-Perf] GPU LUID 动态识别:", luids, "| real=",
-                  {k: (v[0], round(v[1], 2)) for k, v in real.items()})
+            print("[BSAI-Perf] GPU LUID 动态识别:", luids,
+                  "| ded=", {k: round(v, 2) for k, v in ded.items()},
+                  "| cand=", [(l, c, round(d, 2), round(s, 2)) for l, c, d, s in candidates])
         except Exception:
             pass
         return luids
