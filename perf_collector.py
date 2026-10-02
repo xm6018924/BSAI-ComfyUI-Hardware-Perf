@@ -122,8 +122,11 @@ def collect_xpu_worker():
         out["ram_total_mb"] = sys_info.get("total", 0) // (1024 * 1024)
     except Exception:
         pass
-    # 粗利用率：显存占用比例（XPU worker 无标准 util 计数时）
-    if out["vram_total_mb"] > 0:
+    # 引擎忙碌率（8190 服务端滑动窗口真负载）优先；无则退回显存占比
+    busy = data.get("busy_pct")
+    if busy is not None:
+        out["util"] = min(100, int(round(busy)))
+    elif out["vram_total_mb"] > 0:
         out["util"] = min(100, int(out["vram_used_mb"] * 100 // out["vram_total_mb"]))
     return out
 
