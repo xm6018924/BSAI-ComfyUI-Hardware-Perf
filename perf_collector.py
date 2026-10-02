@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-BSAI Hardware Performance Collector —— 四硬件实时数据采集
+BSAI Hardware Performance Collector —— 多硬件协同实时数据采集
 =========================================================
 采集 RTX 5090(GPU1/CUDA)、Intel 核显(GPU0/XPU, 经 8190 XPU worker)、
 Intel NPU(8191)、CPU/内存 的实时性能参数，供前端仪表盘轮询。
@@ -16,7 +16,7 @@ import time
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# 硬件服务地址（与 BSAI 四硬件协同约定一致）
+# 硬件服务地址（与 BSAI 多硬件协同约定一致）
 # ---------------------------------------------------------------------------
 XPU_WORKER_URL = "http://127.0.0.1:8190/system_stats"   # H3VM 副实例（XPU VAE decode）
 NPU_SERVICE_URL = "http://127.0.0.1:8191/health"        # NPU 人脸检测/增强服务

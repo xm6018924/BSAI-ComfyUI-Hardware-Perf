@@ -3,7 +3,7 @@
 BSAI Hardware Performance Monitor —— 节点定义
 ==============================================
 提供两个能力：
-1. `BSAIHardwarePerfMonitor` 节点：放进工作流即可在节点上看到四硬件实时报告
+1. `BSAIHardwarePerfMonitor` 节点：放进工作流即可在节点上看到多硬件协同实时报告
    （前端仪表盘 HUD 会自动出现在画布右上角，无需节点）。
 2. 前端 HUD 数据由 /bsai/perf 端点提供（见 __init__.py）。
 """
@@ -41,7 +41,9 @@ def _ensure_perf_route():
 
 
 class BSAIHardwarePerfMonitor:
-    """BSAI 硬件性能监视器 —— 采样瞬间各硬件实时参数（GPU/XPU/NPU/CPU）"""
+    """BSAI 多硬件协同监视器 —— 采样瞬间各硬件实时参数（GPU/XPU/NPU/CPU/RAM）"""
+
+    DISPLAY_NAME = "BSAI多硬件协同"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -66,7 +68,7 @@ class BSAIHardwarePerfMonitor:
         _ensure_perf_route()
         data = collect_all()
         lines = [
-            "BSAI 四硬件性能（%s）" % time.strftime("%H:%M:%S"),
+            "BSAI多硬件协同（%s）" % time.strftime("%H:%M:%S"),
             "",
             "RTX 5090 (GPU1) | 采样主力",
         ]

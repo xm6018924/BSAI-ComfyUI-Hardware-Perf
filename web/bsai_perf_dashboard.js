@@ -1,5 +1,5 @@
 // ============================================================================
-// BSAI Hardware Performance Dashboard —— 画布浮动四硬件仪表盘
+// BSAI Hardware Performance Dashboard —— 画布浮动多硬件协同仪表盘
 // ----------------------------------------------------------------------------
 // 右上角浮动 HUD，五个圆盘指针仪表（RTX 5090 / Intel 核显 XPU / NPU / CPU / RAM），
 // 0.5s 轮询 GET /bsai/perf，指针平滑跳动显示实时参数。
@@ -160,7 +160,7 @@
         panel.id = "bsai-perf-panel";
         panel.innerHTML = `
           <div class="bsai-perf-header">
-            <span class="bsai-perf-title">BSAI 四硬件监视</span>
+            <span class="bsai-perf-title">BSAI多硬件协同</span>
             <span class="bsai-perf-led" id="bsai-perf-led"></span>
             <button class="bsai-perf-btn" id="bsai-perf-collapse" title="折叠/展开">—</button>
             <button class="bsai-perf-btn" id="bsai-perf-close" title="关闭">×</button>

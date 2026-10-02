@@ -1,6 +1,6 @@
 # BSAI-ComfyUI-Hardware-Perf
 
-画布浮动「四硬件实时监视」仪表盘 HUD —— ComfyUI 画布右上角悬浮实时监控面板，五个圆盘指针仪表实时显示 **RTX GPU / Intel 核显 XPU / NPU / CPU / 内存 RAM** 的占用率、温度与显存/内存水位。
+画布浮动「多硬件协同实时监视」仪表盘 HUD —— ComfyUI 画布右上角悬浮实时监控面板，五个圆盘指针仪表实时显示 **RTX GPU / Intel 核显 XPU / NPU / CPU / 内存 RAM** 的占用率、温度与显存/内存水位。
 
 Floating **4-Hardware Live Monitor** gauge HUD for ComfyUI — a draggable overlay docked at the top-right of the canvas, with five analog dials showing real-time usage, temperature and VRAM/RAM of **RTX GPU, Intel iGPU (XPU), NPU, CPU and RAM**.
 
@@ -46,9 +46,9 @@ git clone https://github.com/xm6018924/BSAI-ComfyUI-Hardware-Perf.git
 
 ## 使用 Usage
 
-启动 ComfyUI 后，HUD 自动出现在画布右上角（灰色标题栏 **BSAI 四硬件监视**）。
+启动 ComfyUI 后，HUD 自动出现在画布右上角（灰色标题栏 **BSAI多硬件协同**）。
 
-After starting ComfyUI, the HUD appears automatically at the top-right of the canvas (grey header **BSAI 四硬件监视**).
+After starting ComfyUI, the HUD appears automatically at the top-right of the canvas (grey header **BSAI多硬件协同**).
 
 | 操作 Action | 说明 Description |
 |---|---|

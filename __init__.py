@@ -26,7 +26,7 @@ __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
 
 async def bsai_perf(request):
-    """四硬件实时性能数据（前端仪表盘轮询）。
+    """多硬件协同实时性能数据（前端仪表盘轮询）。
 
     关键：collect_all() 内含同步 HTTP 轮询（XPU worker / NPU 健康检查）。
     绝不能直接在事件循环主线程里同步执行，否则会阻塞整个 ComfyUI server
@@ -44,7 +44,7 @@ try:
     _ps = server.PromptServer.instance
     if _ps is not None and hasattr(_ps, "routes"):
         _ps.routes.get("/bsai/perf")(bsai_perf)
-        print("[BSAI-Perf] GET /bsai/perf 已注册（四硬件性能监视，异步采集）")
+        print("[BSAI-Perf] GET /bsai/perf 已注册（多硬件协同性能监视，异步采集）")
     else:
         print("[BSAI-Perf] PromptServer.instance 未就绪，/bsai/perf 路由稍后由节点触发注册")
 except Exception as e:
