@@ -231,7 +231,7 @@ def _gpu_engine_poller():
             if len(real) < 2:
                 # 单候选：无法区分，5090 按 3D 实例少，核显留空（HUD 显示 N/A）
                 nvidia = min(real, key=lambda l: (real[l][0], real[l][1]))
-                luids = {"intel": None, "nvidia": nvidia.split("_")[-1]}
+                luids = {"intel": None, "nvidia": nvidia.split("_")[-1].lower()}
             else:
                 # 5090 = 共享显存最小；核显 = 共享显存最大
                 nvidia = min(real, key=lambda l: real[l][1])
@@ -239,7 +239,8 @@ def _gpu_engine_poller():
                 if nvidia == intel:  # 兜底：按 3D 实例数分
                     nvidia = min(real, key=lambda l: real[l][0])
                     intel = max(real, key=lambda l: real[l][0])
-                luids = {"intel": intel.split("_")[-1], "nvidia": nvidia.split("_")[-1]}
+                luids = {"intel": intel.split("_")[-1].lower(),
+                         "nvidia": nvidia.split("_")[-1].lower()}
             luids_ts = now
             print("[BSAI-Perf] GPU LUID 动态识别:", luids, "| real=",
                   {k: (v[0], round(v[1], 2)) for k, v in real.items()})
