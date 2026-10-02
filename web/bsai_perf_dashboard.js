@@ -604,14 +604,14 @@
       #bsai-perf-panel .bsai-gauge-ptr {
         transform-origin: 50% 50%;
         transform-box: view-box;
-        transition: transform 0.45s cubic-bezier(0.34, 1.3, 0.64, 1);
+        transition: transform 0.1s linear;
         will-change: transform;
       }
-      /* 指针拖尾光幕：弧形渐变光带（双层模糊，渐变到透明），随指针平滑旋转 */
+      /* 指针拖尾光幕：弧形渐变光带（双层模糊，渐变到透明），随指针旋转 */
       #bsai-perf-panel .bsai-gauge-veil {
         transform-origin: 50% 50%;
         transform-box: view-box;
-        transition: transform 0.45s cubic-bezier(0.34, 1.3, 0.64, 1), opacity 0.45s ease;
+        transition: transform 0.1s linear, opacity 0.1s linear;
         will-change: transform, opacity;
       }
       /* 拖动中禁用 backdrop-filter 与所有过渡（blur 每帧重算是卡顿主因） */
