@@ -255,9 +255,9 @@
 
         header.addEventListener("pointerdown", (e) => {
             if (e.button !== 0 || e.target.tagName === "BUTTON") return;  // 仅左键拖动；右键留给透明度菜单
-            // 记录拖拽前是否真正贴边（inline style 为 left:0 或 right:0），而非仅视觉靠近
+            // 记录拖拽前是否真正贴边（inline style 为 left:48px 或 right:0）
             const preRect = panel.getBoundingClientRect();
-            const trulyDocked = (panel.style.left === "0" || panel.style.right === "0");
+            const trulyDocked = (panel.style.left === "48px" || panel.style.right === "0");
             const wasDocked = trulyDocked;
             // 拖拽前：先把当前视觉位置换算成 left/top，清除 bottom/right 贴边约束
             const rect = preRect;
@@ -328,7 +328,7 @@
                     panel.style.bottom = "auto";
                     panel.style.top = "auto";
                     if (side === "left") {
-                        panel.style.left = "0";
+                        panel.style.left = "48px";
                         panel.style.borderRadius = "0 12px 12px 0";
                         panel.style.borderLeft = "none";
                         panel.style.boxShadow = "4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
@@ -353,7 +353,7 @@
         function autoDock(wasDocked) {
             const r = panel.getBoundingClientRect();
             const vw = window.innerWidth;
-            if (r.left < 80) {
+            if (r.left < 60) {
                 applyLayout("vertical", "left", true);
                 // 保持松手时的垂直位置
                 panel.style.bottom = "auto";
