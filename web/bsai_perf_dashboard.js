@@ -37,7 +37,7 @@
 
     // ---------------- SVG 圆盘仪表 ----------------
     function buildGauge(id, label, color, unit) {
-        const size = 118;
+        const size = 92;
         const cx = size / 2, cy = size / 2;
         const rOuter = 50, rTick = 44, rArc = 42;
         const angle0 = -135; // 起始角（度，0=右）
@@ -306,9 +306,11 @@
                 panel.classList.remove("bsai-layout-h");
                 panel.style.maxWidth = "none";
                 panel.style.width = "150px";
+                panel.style.transform = "";
                 panel.style.borderRadius = "12px";
                 panel.style.borderRight = "";
                 panel.style.borderLeft = "";
+                panel.style.borderBottom = "";
                 panel.style.boxShadow = "0 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
                 // 只有 dock=true 时才吸附贴边
                 if (dock) {
@@ -570,7 +572,7 @@
       }
       #bsai-perf-panel .bsai-perf-btn:hover { background: rgba(255,255,255,0.2); }
       #bsai-perf-panel .bsai-perf-body {
-        display: flex; flex-direction: column; gap: 4px; padding: 8px 6px;
+        display: flex; flex-direction: column; gap: 2px; padding: 6px 4px;
         align-items: center;
       }
       /* 横版模式：横排一行 */
@@ -580,7 +582,7 @@
       }
       #bsai-perf-panel.bsai-layout-h { width: auto !important; }
       #bsai-perf-panel .bsai-gauge {
-        width: 120px; text-align: center; opacity: 1;
+        width: 92px; text-align: center; opacity: 1;
         transition: opacity 0.3s;
       }
       #bsai-perf-panel .bsai-gauge-svg-wrap { line-height: 0; }
