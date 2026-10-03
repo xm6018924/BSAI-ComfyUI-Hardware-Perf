@@ -334,7 +334,7 @@
                         panel.style.boxShadow = "4px 4px 24px rgba(0,0,0,0.5), 0 0 18px " + THEME.glow;
                     } else {
                         panel.style.right = "0";
-                        panel.style.bottom = "44px";
+                        panel.style.bottom = "84px";
                         panel.style.borderRadius = "12px 0 0 0";
                         panel.style.borderRight = "none";
                         panel.style.borderBottom = "none";
@@ -465,8 +465,8 @@
         });
 
         document.body.appendChild(panel);
-        // 初始定位：右下角贴边，留出缩放按钮空间（底部约 44px）
-        panel.style.bottom = "44px";
+        // 初始定位：右下角贴边，上移避开画布缩放按钮（底部 84px）
+        panel.style.bottom = "84px";
         panel.style.right = "0";
     }
 
@@ -547,7 +547,7 @@
     style.textContent = `
       #bsai-perf-panel {
         position: fixed;
-        bottom: 0;
+        bottom: 84px;
         right: 0;
         z-index: 99999;
         background: ${THEME.panelBg};
