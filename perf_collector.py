@@ -330,32 +330,37 @@ def _gpu_engine_poller():
             pdh.PdhCollectQueryData(hq)  # 首次初始化
             time.sleep(1.0)
             if pdh.PdhCollectQueryData(hq) == 0:
-                intel_mx = 0.0
-                nv_mx = 0.0
+                # 实例级 MAX：1s 窗口前后各读一次，捕获脉冲峰值
+                intel_per = {}
+                nv_per = {}
                 matched = {"intel": 0, "nvidia": 0}
-                for name, hc in counters:
-                    vt = wintypes.DWORD()
-                    v = _FmtVal()
-                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
-                    if v.CStatus == 0:
-                        low = name.lower()
-                        if cur.get("intel") and cur["intel"] in low:
-                            intel_mx = max(intel_mx, v.value)
-                            matched["intel"] += 1
-                        elif cur.get("nvidia") and cur["nvidia"] in low:
-                            nv_mx = max(nv_mx, v.value)
-                            matched["nvidia"] += 1
+                for _sample in range(2):
+                    for name, hc in counters:
+                        vt = wintypes.DWORD()
+                        v = _FmtVal()
+                        pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
+                        if v.CStatus == 0:
+                            low = name.lower()
+                            if cur.get("intel") and cur["intel"] in low:
+                                intel_per[name] = max(intel_per.get(name, 0.0), v.value)
+                                matched["intel"] += 1
+                            elif cur.get("nvidia") and cur["nvidia"] in low:
+                                nv_per[name] = max(nv_per.get(name, 0.0), v.value)
+                                matched["nvidia"] += 1
                 # LUID 漂移自愈：本轮回合都没有命中则强制刷新识别
                 if cur.get("intel") and not cur.get("nvidia") and matched["nvidia"] == 0:
                     luids_ts = 0.0
                 elif cur.get("nvidia") and matched["nvidia"] == 0 and matched["intel"] == 0:
                     luids_ts = 0.0
+                # 任务管理器口径 = 该 GPU 全部 3D 引擎实例利用率之和（≤100）
+                intel_agg = min(100.0, sum(intel_per.values()))
+                nv_agg = min(100.0, sum(nv_per.values()))
                 with _INTEL_UTIL_LOCK:
                     global _INTEL_UTIL_CACHE
-                    _INTEL_UTIL_CACHE = max(0, min(100, intel_mx))
+                    _INTEL_UTIL_CACHE = intel_agg
                 with _NVIDIA_UTIL_LOCK:
                     global _NVIDIA_UTIL_CACHE
-                    _NVIDIA_UTIL_CACHE = max(0, min(100, nv_mx))
+                    _NVIDIA_UTIL_CACHE = nv_agg
             pdh.PdhCloseQuery(hq)
         except Exception:
             pass

@@ -1,0 +1,11 @@
+== GPU Adapter Memory instances=4 counters=['Shared Usage', 'Dedicated Usage', 'Total Committed'] ==
+  counter[Shared Usage] agg={'luid_0x00000000_0x00014E41': 0.3, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.48, 'luid_0x00000000_0x00016BCE': 0.12}
+  counter[Dedicated Usage] agg={'luid_0x00000000_0x00014E41': 23.23, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.0, 'luid_0x00000000_0x00016BCE': 0.0}
+  counter[Total Committed] agg={'luid_0x00000000_0x00014E41': 24.46, 'luid_0x00000000_0x000166E7': 0.02, 'luid_0x00000000_0x0001674A': 0.63, 'luid_0x00000000_0x00016BCE': 0.12}
+== GPU Process Memory instances=54 counters=['Shared Usage', 'Dedicated Usage', 'Non Local Usage', 'Local Usage', 'Total Committed'] ==
+  counter[Shared Usage] agg={'luid_0x00000000_0x00014E41': 0.3, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.58, 'luid_0x00000000_0x00016BCE': 0.12}
+  counter[Dedicated Usage] agg={'luid_0x00000000_0x00014E41': 23.51, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.0, 'luid_0x00000000_0x00016BCE': 0.0}
+  counter[Non Local Usage] agg={'luid_0x00000000_0x00014E41': 0.25, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.0, 'luid_0x00000000_0x00016BCE': 0.0}
+  counter[Local Usage] agg={'luid_0x00000000_0x00014E41': 5.36, 'luid_0x00000000_0x000166E7': 0.0, 'luid_0x00000000_0x0001674A': 0.56, 'luid_0x00000000_0x00016BCE': 0.12}
+  counter[Total Committed] agg={'luid_0x00000000_0x00014E41': 20.95, 'luid_0x00000000_0x000166E7': 0.03, 'luid_0x00000000_0x0001674A': 0.65, 'luid_0x00000000_0x00016BCE': 0.12}
+done

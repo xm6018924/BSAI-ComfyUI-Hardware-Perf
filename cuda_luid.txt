@@ -1,0 +1,17 @@
+rnd0 count=1
+torch ok cuda=True
+rnd1 count=1
+matmul done
+rnd2 count=1
+rnd3 count=1
+rnd4 count=1
+rnd5 count=1
+rnd6 count=1
+rnd7 count=1
+rnd8 count=1
+rnd9 count=1
+rnd10 count=1
+rnd11 count=1
+ENG_TYPE_LUID_MAP:
+  3 -> ['0x00000000_0x00014E41']
+CUDA_LUIDS=[]

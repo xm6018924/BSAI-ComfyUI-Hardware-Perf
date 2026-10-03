@@ -1,0 +1,4 @@
+﻿gpu0 util=7 intel=7 busy=0 name=Intel Arc XPU online=True
+gpu1 util=11 nvml=6 mem=1414MB temp=44C power=42.8W
+npu={"ok":true,"online":true,"util":10,"models":8,"latency_ms":0,"device_name":"Intel AI Boost NPU","mode":"hw+svc"}
+cpu util=15 mem=/

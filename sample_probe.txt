@@ -1,0 +1,36 @@
+subscribed=291 total_3d=291
+rnd00 5090 MAX=25.7% SUM=36.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd01 5090 MAX=45.8% SUM=61.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd02 5090 MAX=5.1% SUM=10.9% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd03 5090 MAX=9.7% SUM=16.7% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd04 5090 MAX=9.2% SUM=21.8% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd05 5090 MAX=64.8% SUM=76.0% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd06 5090 MAX=10.3% SUM=20.0% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd07 5090 MAX=10.5% SUM=20.5% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd08 5090 MAX=8.6% SUM=15.9% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd09 5090 MAX=74.5% SUM=96.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd10 5090 MAX=9.5% SUM=17.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd11 5090 MAX=8.8% SUM=15.7% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd12 5090 MAX=8.3% SUM=15.3% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd13 5090 MAX=69.2% SUM=77.0% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd14 5090 MAX=6.0% SUM=12.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd15 5090 MAX=7.8% SUM=14.2% (inst=32) iGPU MAX=0.3% SUM=0.3% (inst=9)
+rnd16 5090 MAX=8.6% SUM=15.0% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd17 5090 MAX=67.1% SUM=82.9% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd18 5090 MAX=9.7% SUM=22.8% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd19 5090 MAX=11.3% SUM=22.3% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd20 5090 MAX=11.4% SUM=22.6% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd21 5090 MAX=62.6% SUM=79.2% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd22 5090 MAX=11.6% SUM=26.2% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd23 5090 MAX=8.7% SUM=16.1% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd24 5090 MAX=8.0% SUM=15.0% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd25 5090 MAX=8.5% SUM=15.8% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd26 5090 MAX=72.0% SUM=88.3% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd27 5090 MAX=8.9% SUM=15.9% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd28 5090 MAX=5.9% SUM=11.4% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+rnd29 5090 MAX=19.5% SUM=28.9% (inst=32) iGPU MAX=0.0% SUM=0.0% (inst=9)
+5090 MAX hist: [25.7, 45.8, 5.1, 9.7, 9.2, 64.8, 10.3, 10.5, 8.6, 74.5, 9.5, 8.8, 8.3, 69.2, 6.0, 7.8, 8.6, 67.1, 9.7, 11.3, 11.4, 62.6, 11.6, 8.7, 8.0, 8.5, 72.0, 8.9, 5.9, 19.5]
+5090 SUM hist: [36.6, 61.6, 10.9, 16.7, 21.8, 76.0, 20.0, 20.5, 15.9, 96.6, 17.6, 15.7, 15.3, 77.0, 12.6, 14.2, 15.0, 82.9, 22.8, 22.3, 22.6, 79.2, 26.2, 16.1, 15.0, 15.8, 88.3, 15.9, 11.4, 28.9]
+iGPU MAX hist: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+iGPU SUM hist: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+5090 MAX mean=22.9 SUM mean=33.0
