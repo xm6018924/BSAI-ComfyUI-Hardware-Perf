@@ -16,26 +16,49 @@ from .perf_collector import collect_all
 
 
 def _ensure_perf_route():
-    """幂等补注册 /bsai/perf 路由（模块加载时 instance 未就绪则节点运行时补上）。"""
+    """幂等补注册 /bsai/perf 和 /bsai/hw/decide 路由（模块加载时 instance 未就绪则节点运行时补上）。"""
     try:
         import server
         ps = server.PromptServer.instance
         if ps is None or not hasattr(ps, "routes"):
             return
+        has_perf = False
+        has_decide = False
         for r in ps.routes.routes():
-            if getattr(r, "path", "") == "/bsai/perf":
-                return
+            p = getattr(r, "path", "")
+            if p == "/bsai/perf":
+                has_perf = True
+            if p == "/bsai/hw/decide":
+                has_decide = True
+        if has_perf and has_decide:
+            return
         from aiohttp import web
-        from .perf_collector import collect_all as _ca
+        from .perf_collector import collect_all as _ca, decide_hardware as _dh
+        import asyncio
 
-        async def _handler(request):
-            try:
-                return web.json_response(_ca())
-            except Exception as e:
-                return web.json_response({"ts": 0, "error": str(e)})
+        if not has_perf:
+            async def _handler(request):
+                try:
+                    data = await asyncio.to_thread(_ca)
+                    return web.json_response(data)
+                except Exception as e:
+                    return web.json_response({"ts": 0, "error": str(e)})
+            ps.routes.get("/bsai/perf")(_handler)
 
-        ps.routes.get("/bsai/perf")(_handler)
-        print("[BSAI-Perf] GET /bsai/perf 已补注册")
+        if not has_decide:
+            async def _decide_handler(request):
+                try:
+                    task_type = request.query.get("task", "face_detect")
+                    prefer = request.query.get("prefer", "balanced")
+                    result = await asyncio.to_thread(
+                        lambda: _dh(task_type=task_type, prefer=prefer)
+                    )
+                    return web.json_response(result)
+                except Exception as e:
+                    return web.json_response({"recommended": "GPU1", "error": str(e)})
+            ps.routes.get("/bsai/hw/decide")(_decide_handler)
+
+        print("[BSAI-Perf] 硬件路由 API 已补注册")
     except Exception as e:
         print("[BSAI-Perf] 补注册失败:", e)
 

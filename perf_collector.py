@@ -330,6 +330,116 @@ def collect_orchestrator():
 
 
 # ---------------------------------------------------------------------------
+# 硬件路由决策：供其他插件查询"当前应该用哪个硬件执行任务"
+# 基于实时负载 + 硬件可用性 + 任务类型，返回推荐设备
+# ---------------------------------------------------------------------------
+def decide_hardware(task_type="face_detect", prefer="balanced"):
+    """智能硬件路由决策：根据实时负载和任务类型推荐最佳执行设备。
+
+    Args:
+        task_type: 任务类型
+            - "face_detect": 人脸检测（NPU 优先，最轻量）
+            - "face_restore": 人脸修复（GPU1 为主，NPU 仅检测卸载）
+            - "vae_decode": VAE 解码（XPU 优先）
+            - "sampling": 扩散采样（GPU1 唯一）
+            - "general": 通用计算
+        prefer: 偏好策略
+            - "performance": 性能优先（总是用最快的设备）
+            - "balanced": 均衡（尽量卸载，保留 GPU1 给重任务）
+            - "offload": 最大化卸载（能不用 GPU1 就不用）
+
+    Returns:
+        dict: {
+            "recommended": "NPU" | "XPU" | "GPU1" | "CPU",
+            "reason": str,
+            "gpu1_util": int,
+            "npu_online": bool,
+            "xpu_online": bool,
+            "alternatives": [str, ...],
+            "gpu1_free_mb": int,
+        }
+    """
+    data = collect_all()
+    gpu1 = data.get("gpu1", {})
+    npu = data.get("npu", {})
+    gpu0 = data.get("gpu0", {})
+    main_vram = data.get("main", {})
+
+    gpu1_util = gpu1.get("util", 0) if gpu1.get("ok") else 0
+    gpu1_free_mb = main_vram.get("free_mb", 0) if main_vram.get("ok") else 0
+    npu_online = npu.get("online", False)
+    xpu_online = gpu0.get("online", False)
+
+    result = {
+        "recommended": "GPU1",
+        "reason": "",
+        "gpu1_util": gpu1_util,
+        "gpu1_free_mb": gpu1_free_mb,
+        "npu_online": npu_online,
+        "xpu_online": xpu_online,
+        "alternatives": [],
+        "task_type": task_type,
+        "prefer": prefer,
+    }
+
+    # 任务类型 -> 候选设备优先级
+    candidates = {
+        "face_detect": ["NPU", "GPU1", "CPU"],
+        "face_restore": ["GPU1", "NPU"],   # 检测走 NPU，修复仍在 GPU1
+        "vae_decode": ["XPU", "GPU1", "CPU"],
+        "sampling": ["GPU1"],
+        "general": ["GPU1", "CPU"],
+    }
+    priority = candidates.get(task_type, ["GPU1"])
+
+    # 检查各候选设备是否可用
+    available = []
+    for dev in priority:
+        if dev == "NPU" and npu_online:
+            available.append(dev)
+        elif dev == "XPU" and xpu_online:
+            available.append(dev)
+        elif dev == "GPU1" and gpu1.get("ok"):
+            available.append(dev)
+        elif dev == "CPU":
+            available.append(dev)
+
+    if not available:
+        result["recommended"] = "GPU1"
+        result["reason"] = "无可用设备，回退 GPU1"
+        return result
+
+    # 根据偏好策略调整
+    if prefer == "offload" and len(available) > 1:
+        # 最大化卸载：选非 GPU1 的第一个可用设备
+        for dev in available:
+            if dev != "GPU1":
+                result["recommended"] = dev
+                result["reason"] = f"最大化卸载策略 → {dev}（GPU1 利用率 {gpu1_util}%）"
+                result["alternatives"] = [d for d in available if d != dev]
+                return result
+
+    if prefer == "balanced":
+        # 均衡：GPU1 利用率高时优先卸载，低时用 GPU1
+        gpu1_busy = gpu1_util >= 70 or gpu1_free_mb < 2048  # 利用率>=70% 或显存<2GB
+        if gpu1_busy and len(available) > 1:
+            for dev in available:
+                if dev != "GPU1":
+                    result["recommended"] = dev
+                    result["reason"] = (
+                        f"GPU1 繁忙（利用率 {gpu1_util}%，显存 {gpu1_free_mb}MB 可用）→ 卸载到 {dev}"
+                    )
+                    result["alternatives"] = [d for d in available if d != dev]
+                    return result
+
+    # performance 或 GPU1 不忙：用最快设备（列表第一个可用的）
+    result["recommended"] = available[0]
+    result["reason"] = f"性能优先策略 → {available[0]}（GPU1 利用率 {gpu1_util}%）"
+    result["alternatives"] = available[1:]
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------------------
 def collect_all():

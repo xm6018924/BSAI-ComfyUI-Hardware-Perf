@@ -18,7 +18,7 @@ import server
 from aiohttp import web
 
 from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
-from .perf_collector import collect_all
+from .perf_collector import collect_all, decide_hardware
 
 WEB_DIRECTORY = "./web"
 
@@ -40,11 +40,33 @@ async def bsai_perf(request):
         return web.json_response({"ts": 0, "error": str(e)})
 
 
+async def bsai_hw_decide(request):
+    """智能硬件路由决策 API：根据实时负载推荐最佳执行设备。
+
+    查询参数：
+        task: face_detect | face_restore | vae_decode | sampling | general
+        prefer: performance | balanced | offload
+
+    其他插件可直接调用此接口来决定任务应该分配到哪个硬件，
+    实现真正的"多硬件协同"——不只是监控，还要主动调度。
+    """
+    try:
+        task_type = request.query.get("task", "face_detect")
+        prefer = request.query.get("prefer", "balanced")
+        result = await asyncio.to_thread(
+            lambda: decide_hardware(task_type=task_type, prefer=prefer)
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"recommended": "GPU1", "error": str(e)})
+
+
 try:
     _ps = server.PromptServer.instance
     if _ps is not None and hasattr(_ps, "routes"):
         _ps.routes.get("/bsai/perf")(bsai_perf)
-        print("[BSAI-Perf] GET /bsai/perf 已注册（多硬件协同性能监视，异步采集）")
+        _ps.routes.get("/bsai/hw/decide")(bsai_hw_decide)
+        print("[BSAI-Perf] GET /bsai/perf + /bsai/hw/decide 已注册（多硬件协同性能监视 + 智能路由决策，异步采集）")
     else:
         print("[BSAI-Perf] PromptServer.instance 未就绪，/bsai/perf 路由稍后由节点触发注册")
 except Exception as e:
