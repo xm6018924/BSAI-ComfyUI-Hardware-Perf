@@ -6,12 +6,15 @@ BSAI Hardware Performance Collector —— 多硬件协同实时数据采集
 Intel NPU(8191)、CPU/内存 的实时性能参数，供前端仪表盘轮询。
 
 所有采集函数独立 try/except，任何一个硬件失败不影响整体返回。
+
+性能说明：
+  GPU1 利用率直接通过 pynvml 从 NVIDIA 驱动同步读取（按需调用，零后台开销）。
+  旧版 PDH 后台轮询 (_gpu_engine_poller) 已移除 —— 原方案以 300ms 间隔在 daemon
+  线程中枚举 GPU Engine 计数器，持续占用系统资源并拖慢 ComfyUI 推理效率。
 """
 
 import json
 import os
-import subprocess
-import threading
 import time
 import urllib.request
 
@@ -41,6 +44,21 @@ def _nvml_init():
         _NVML_HANDLE = None
 
 
+def _read_nvidia_gpu_util():
+    """RTX 5090 利用率 (0-100)，直接通过 pynvml 从 GPU1 驱动同步读取，无后台轮询。"""
+    global _NVML_HANDLE
+    try:
+        import pynvml
+        if _NVML_HANDLE is None:
+            _nvml_init()
+        if _NVML_HANDLE is None:
+            return 0
+        util = pynvml.nvmlDeviceGetUtilizationRates(_NVML_HANDLE)
+        return int(util.gpu)
+    except Exception:
+        return 0
+
+
 def collect_gpu_nvidia():
     """RTX 5090 利用率 / 显存 / 温度 / 功耗。"""
     global _NVML_HANDLE, _NVML_NAME
@@ -62,9 +80,8 @@ def collect_gpu_nvidia():
             power, power_max = 0.0, 0.0
         out.update({
             "ok": True, "name": _NVML_NAME,
-            # 利用率用 GPU Engine 计数器（与任务管理器 GPU1 同源），pynvml 仅作参考值
-            "util": _read_nvidia_gpu_util(),
-            "nvml_util": int(util.gpu), "mem_used_mb": mem.used // (1024 * 1024),
+            "util": int(util.gpu),
+            "mem_used_mb": mem.used // (1024 * 1024),
             "mem_total_mb": mem.total // (1024 * 1024),
             "temp_c": int(temp), "power_w": round(power, 1), "power_max_w": round(power_max, 1),
         })
@@ -100,286 +117,10 @@ def _http_json(url, timeout=1.5, offline_retry_s=5.0):
         return None, None
 
 
-_INTEL_UTIL_CACHE = 0.0
-_INTEL_UTIL_LOCK = threading.Lock()
-
-
-_NVIDIA_UTIL_CACHE = 0.0
-_NVIDIA_UTIL_LOCK = threading.Lock()
-
-
-def _gpu_engine_poller():
-    """PDH 直读：Python 内订阅 GPU Engine 3D 计数器（与任务管理器 GPU0/GPU1 同源），
-    秒级刷新核显/5090 利用率缓存。实例动态变化，每轮重枚举重订阅。"""
-    import ctypes
-    from ctypes import wintypes
-
-    pdh = ctypes.WinDLL("pdh.dll", use_last_error=True)
-    PDH_FMT_DOUBLE = 0x00000200
-    PDH_MORE_DATA = 0x800007D2
-
-    pdh.PdhEnumObjectItemsW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
-                                        wintypes.LPWSTR, wintypes.LPDWORD, wintypes.LPWSTR,
-                                        wintypes.LPDWORD, wintypes.DWORD, wintypes.DWORD]
-    pdh.PdhEnumObjectItemsW.restype = wintypes.LONG
-    pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
-    pdh.PdhOpenQueryW.restype = wintypes.LONG
-    pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.DWORD,
-                                          ctypes.POINTER(ctypes.c_void_p)]
-    pdh.PdhAddEnglishCounterW.restype = wintypes.LONG
-    pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
-    pdh.PdhCollectQueryData.restype = wintypes.LONG
-    pdh.PdhGetFormattedCounterValue.argtypes = [ctypes.c_void_p, wintypes.DWORD,
-                                                ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
-    pdh.PdhGetFormattedCounterValue.restype = wintypes.LONG
-    pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
-    pdh.PdhCloseQuery.restype = wintypes.LONG
-
-    class _FmtVal(ctypes.Structure):
-        _fields_ = [("CStatus", wintypes.DWORD), ("value", ctypes.c_double)]
-
-    def _enum_3d():
-        """枚举 GPU Engine 对象，返回全部 3D 引擎实例名。"""
-        obj = "GPU Engine"
-        cch_c = wintypes.DWORD(0)
-        cch_i = wintypes.DWORD(0)
-        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
-                                None, ctypes.byref(cch_i), 0, 0)
-        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
-        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
-        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
-                                      ib, ctypes.byref(cch_i), 0, 0)
-        if ret not in (0, PDH_MORE_DATA):
-            return []
-        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
-        out = []
-        for s in data.decode("utf-16-le", errors="ignore").split("\0"):
-            if s and "engtype_3d" in s.lower():
-                out.append(s)
-        return out
-
-    def _shared_by_luid():
-        """枚举 GPU Process Memory 的 Shared Usage，按 LUID 聚合（GB）。"""
-        obj = "GPU Process Memory"
-        cch_c = wintypes.DWORD(0)
-        cch_i = wintypes.DWORD(0)
-        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
-                                None, ctypes.byref(cch_i), 0, 0)
-        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
-        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
-        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
-                                      ib, ctypes.byref(cch_i), 0, 0)
-        if ret not in (0, PDH_MORE_DATA):
-            return {}
-        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
-        insts = [s for s in data.decode("utf-16-le", errors="ignore").split("\0") if s]
-        data2 = ctypes.string_at(ctypes.addressof(cb), cb._length_ * 2)
-        counters = [s for s in data2.decode("utf-16-le", errors="ignore").split("\0") if s]
-        if not insts or "Shared Usage" not in counters:
-            return {}
-        hq = ctypes.c_void_p()
-        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
-            return {}
-        subs = []
-        for inst in insts:
-            hc = ctypes.c_void_p()
-            if pdh.PdhAddEnglishCounterW(hq, "\\GPU Process Memory(" + inst + ")\\Shared Usage",
-                                         0, ctypes.byref(hc)) == 0:
-                subs.append((inst, hc))
-        agg = {}
-        if subs:
-            pdh.PdhCollectQueryData(hq)
-            time.sleep(1.0)
-            if pdh.PdhCollectQueryData(hq) == 0:
-                for inst, hc in subs:
-                    vt = wintypes.DWORD()
-                    v = _FmtVal()
-                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
-                    if v.CStatus == 0 and v.value > 0:
-                        idx = inst.lower().find("luid_0x")
-                        lid = inst[idx:inst.find("_phys_", idx)] if idx >= 0 else inst
-                        agg[lid] = agg.get(lid, 0.0) + v.value
-        pdh.PdhCloseQuery(hq)
-        return {k: val / (1024 ** 3) for k, val in agg.items()}
-
-    def _dedicated_by_luid():
-        """枚举 GPU Adapter Memory 的 Dedicated Usage，按 LUID 聚合（GB）。
-        决定性特征：RTX 5090 拥有 24GB 专用显存（Dedicated Usage ≈ 23GB），
-        核显/软件适配器/NPU 的 Dedicated ≈ 0。"""
-        obj = "GPU Adapter Memory"
-        cch_c = wintypes.DWORD(0)
-        cch_i = wintypes.DWORD(0)
-        pdh.PdhEnumObjectItemsW(None, None, obj, None, ctypes.byref(cch_c),
-                                None, ctypes.byref(cch_i), 0, 0)
-        cb = ctypes.create_unicode_buffer(cch_c.value + 2)
-        ib = ctypes.create_unicode_buffer(cch_i.value + 2)
-        ret = pdh.PdhEnumObjectItemsW(None, None, obj, cb, ctypes.byref(cch_c),
-                                      ib, ctypes.byref(cch_i), 0, 0)
-        if ret not in (0, PDH_MORE_DATA):
-            return {}
-        data = ctypes.string_at(ctypes.addressof(ib), ib._length_ * 2)
-        insts = [s for s in data.decode("utf-16-le", errors="ignore").split("\0") if s]
-        data2 = ctypes.string_at(ctypes.addressof(cb), cb._length_ * 2)
-        counters = [s for s in data2.decode("utf-16-le", errors="ignore").split("\0") if s]
-        if not insts or "Dedicated Usage" not in counters:
-            return {}
-        hq = ctypes.c_void_p()
-        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
-            return {}
-        subs = []
-        for inst in insts:
-            hc = ctypes.c_void_p()
-            if pdh.PdhAddEnglishCounterW(hq, "\\GPU Adapter Memory(" + inst + ")\\Dedicated Usage",
-                                         0, ctypes.byref(hc)) == 0:
-                subs.append((inst, hc))
-        agg = {}
-        if subs:
-            pdh.PdhCollectQueryData(hq)
-            time.sleep(1.0)
-            if pdh.PdhCollectQueryData(hq) == 0:
-                for inst, hc in subs:
-                    vt = wintypes.DWORD()
-                    v = _FmtVal()
-                    pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
-                    if v.CStatus == 0 and v.value > 0:
-                        idx = inst.lower().find("luid_0x")
-                        lid = inst[idx:inst.find("_phys_", idx)] if idx >= 0 else inst
-                        agg[lid] = agg.get(lid, 0.0) + v.value
-        pdh.PdhCloseQuery(hq)
-        return {k: val / (1024 ** 3) for k, val in agg.items()}
-
-    # 动态 LUID 识别缓存：{"intel": "0x00014e41", "nvidia": "0x0001674a"}
-    luids = {}
-    luids_ts = 0.0
-
-    def identify_luids():
-        """动态识别核显/5090 的 LUID（会话/驱动重启后 LUID 会漂移，必须动态）。
-        决定性特征（2026-10-03 实测）：RTX 5090 的 GPU Adapter Memory Dedicated Usage ≈ 23GB
-        （24GB 专用显存），其余适配器（核显/软件/NPU）Dedicated ≈ 0。
-        5090 = Dedicated 最大的 LUID；核显 = 剩余有 3D 引擎、排除纯软件适配器的 LUID。
-        启动时识别 + 每 60s 刷新 + 采样失配时即时刷新。"""
-        nonlocal luids, luids_ts
-        now = time.time()
-        if luids and now - luids_ts < 60:
-            return luids
-        try:
-            insts3 = _enum_3d()
-            by_luid = {}
-            for name in insts3:
-                idx = name.lower().find("luid_0x")
-                lid = name[idx:name.find("_phys_", idx)] if idx >= 0 else name
-                by_luid[lid] = by_luid.get(lid, 0) + 1
-            if not by_luid:
-                return luids
-            shared = _shared_by_luid()
-            ded = _dedicated_by_luid()
-            nvidia = None
-            # 5090 = Dedicated 专用显存最大（>1GB 才是独显，防 0 值干扰）
-            ded_gt1 = {lid: v for lid, v in ded.items() if v > 1.0}
-            if ded_gt1:
-                nvidia = max(ded_gt1, key=lambda l: ded_gt1[l])
-            # 核显候选 = 有 3D 引擎的 LUID，排除 5090 与纯软件适配器（3D 实例>=100 且无显存）
-            candidates = []
-            for lid, cnt in by_luid.items():
-                if lid == nvidia:
-                    continue
-                d = ded.get(lid, 0.0)
-                s = shared.get(lid, 0.0)
-                if cnt >= 100 and d < 0.01 and s < 0.01:
-                    continue  # 纯软件/基础显示适配器（如 WARP）
-                candidates.append((lid, cnt, d, s))
-            if nvidia is None and candidates:
-                # 兜底（Dedicated 探测失败）：5090 = 共享显存最小的候选
-                nvidia = min(candidates, key=lambda c: c[3])[0]
-            intel = None
-            if candidates:
-                # 核显 = 剩余候选中共享显存最大（独显已排除；软件已排除）
-                intel = max(candidates, key=lambda c: c[3])[0]
-            if nvidia is None and intel is None:
-                return luids
-            luids = {"intel": (intel.split("_")[-1].lower() if intel else None),
-                     "nvidia": (nvidia.split("_")[-1].lower() if nvidia else None)}
-            luids_ts = now
-            print("[BSAI-Perf] GPU LUID 动态识别:", luids,
-                  "| ded=", {k: round(v, 2) for k, v in ded.items()},
-                  "| cand=", [(l, c, round(d, 2), round(s, 2)) for l, c, d, s in candidates])
-        except Exception:
-            pass
-        return luids
-
-    while True:
-        try:
-            insts = _enum_3d()
-            if not insts:
-                time.sleep(1)
-                continue
-            cur = identify_luids()
-            if not cur.get("intel") and not cur.get("nvidia"):
-                time.sleep(1)
-                continue
-            hq = ctypes.c_void_p()
-            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) != 0:
-                time.sleep(1)
-                continue
-            counters = []
-            for name in insts:
-                hc = ctypes.c_void_p()
-                if pdh.PdhAddEnglishCounterW(hq, "\\GPU Engine(" + name + ")\\Utilization Percentage",
-                                             0, ctypes.byref(hc)) == 0:
-                    counters.append((name, hc))
-            pdh.PdhCollectQueryData(hq)  # 首次初始化
-            time.sleep(1.0)
-            if pdh.PdhCollectQueryData(hq) == 0:
-                # 实例级 MAX：1s 窗口前后各读一次，捕获脉冲峰值
-                intel_per = {}
-                nv_per = {}
-                matched = {"intel": 0, "nvidia": 0}
-                for _sample in range(2):
-                    for name, hc in counters:
-                        vt = wintypes.DWORD()
-                        v = _FmtVal()
-                        pdh.PdhGetFormattedCounterValue(hc, PDH_FMT_DOUBLE, ctypes.byref(vt), ctypes.byref(v))
-                        if v.CStatus == 0:
-                            low = name.lower()
-                            if cur.get("intel") and cur["intel"] in low:
-                                intel_per[name] = max(intel_per.get(name, 0.0), v.value)
-                                matched["intel"] += 1
-                            elif cur.get("nvidia") and cur["nvidia"] in low:
-                                nv_per[name] = max(nv_per.get(name, 0.0), v.value)
-                                matched["nvidia"] += 1
-                # LUID 漂移自愈：本轮回合都没有命中则强制刷新识别
-                if cur.get("intel") and not cur.get("nvidia") and matched["nvidia"] == 0:
-                    luids_ts = 0.0
-                elif cur.get("nvidia") and matched["nvidia"] == 0 and matched["intel"] == 0:
-                    luids_ts = 0.0
-                # 任务管理器口径 = 该 GPU 全部 3D 引擎实例利用率之和（≤100）
-                intel_agg = min(100.0, sum(intel_per.values()))
-                nv_agg = min(100.0, sum(nv_per.values()))
-                with _INTEL_UTIL_LOCK:
-                    global _INTEL_UTIL_CACHE
-                    _INTEL_UTIL_CACHE = intel_agg
-                with _NVIDIA_UTIL_LOCK:
-                    global _NVIDIA_UTIL_CACHE
-                    _NVIDIA_UTIL_CACHE = nv_agg
-            pdh.PdhCloseQuery(hq)
-        except Exception:
-            pass
-        time.sleep(0.3)
-
-
-threading.Thread(target=_gpu_engine_poller, daemon=True).start()
-
-
-def _read_nvidia_gpu_util():
-    """返回缓存的 RTX 5090 利用率 (0-100)，与任务管理器 GPU1 同源。"""
-    with _NVIDIA_UTIL_LOCK:
-        return int(round(_NVIDIA_UTIL_CACHE))
-
-
 def _read_intel_gpu_util():
-    """返回缓存的 Intel 核显利用率 (0-100)。"""
-    with _INTEL_UTIL_LOCK:
-        return int(round(_INTEL_UTIL_CACHE))
+    """Intel 核显利用率 (0-100)。无 PDH 后台轮询，返回 0 作为兜底；
+    collect_xpu_worker 会取 max(worker_busy, intel_util) 展示实际负载。"""
+    return 0
 
 
 def collect_xpu_worker():
@@ -407,8 +148,8 @@ def collect_xpu_worker():
             out["ram_total_mb"] = sys_info.get("total", 0) // (1024 * 1024)
         except Exception:
             pass
-    # 合并两个利用率源：Intel 核显系统计数器 + 8190 worker busy_pct
-    # 指针取最大值（谁忙谁驱动），两个数值都保留给前端子文本展示
+    # 利用率来源：8190 XPU worker busy_pct 为主
+    # 旧 PDH 系统计数器已移除（避免后台轮询开销），intel_util 恒为 0
     intel_util = _read_intel_gpu_util()
     worker_busy = 0
     try:
