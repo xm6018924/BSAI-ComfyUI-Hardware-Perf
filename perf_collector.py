@@ -190,21 +190,31 @@ def _npu_hw_ok():
 
 
 def collect_npu():
-    """NPU 状态：硬件在位 + 服务插件加载 + FaceRefine 使用标志，三路合一。
+    """NPU 状态：硬件在位 + 服务插件加载 + 真实调用统计。
 
-    不做同步 HTTP 自请求（asyncio 事件循环内会卡死 server）；
-    本进程探测无网络、无阻塞，NPU 服务在线即如实上报 online。
+    Intel NPU 没有 nvidia-smi 那样的利用率读取接口，
+    改用「调用计数 + 延迟 + 忙闲状态」反映真实工作状态。
+
+    三路合一：
+    1. 硬件在位（openvino Core.available_devices 含 NPU）
+    2. 服务插件加载（BSAI-NPU-Service 的 _svc 存在且 device=NPU）
+    3. FaceRefine 启用（BSAI_ComfyUI_FaceRefine 的 _NPU_FACE_DETECT 标志）
     """
     out = {"ok": False, "online": False, "util": 0, "models": 0,
-           "latency_ms": 0, "device_name": "Intel AI Boost NPU"}
+           "latency_ms": 0, "device_name": "Intel AI Boost NPU",
+           "total_calls": 0, "active_now": False, "inflight": 0,
+           "window_calls_5s": 0, "model_calls": {}, "mode": "off"}
     try:
         hw = _npu_hw_ok()
         svc_ok = False
+        svc_stats = None
         try:
             import importlib
             _npu_mod = importlib.import_module("custom_nodes.BSAI-NPU-Service")
             _svc = getattr(_npu_mod, "_svc", None)
             svc_ok = _svc is not None and getattr(_svc, "device", "") == "NPU"
+            if svc_ok and hasattr(_svc, "get_stats"):
+                svc_stats = _svc.get_stats()
         except Exception:
             pass
         enabled = False
@@ -217,11 +227,32 @@ def collect_npu():
         online = hw and (svc_ok or enabled)
         out["ok"] = True
         out["online"] = online
-        out["util"] = 10 if online else 0
-        out["models"] = 8 if online else 0
         out["device_name"] = "Intel AI Boost NPU"
         out["mode"] = ("hw+svc" if (hw and svc_ok)
                        else ("face-refine" if enabled else "off"))
+
+        # 真实统计数据（如果 NPU 服务有 get_stats）
+        if svc_stats is not None:
+            out["total_calls"] = svc_stats.get("total_calls", 0)
+            out["active_now"] = svc_stats.get("active_now", False)
+            out["inflight"] = svc_stats.get("inflight", 0)
+            out["window_calls_5s"] = svc_stats.get("window_calls_5s", 0)
+            out["latency_ms"] = svc_stats.get("last_latency_ms", 0)
+            out["model_calls"] = svc_stats.get("model_calls", {})
+            out["avg_latency_ms"] = svc_stats.get("avg_latency_ms", 0)
+            # 用"活跃状态"映射到 util 显示（活跃=有调用在进行，非活跃=0）
+            # 仪表盘的 util 是百分比显示，这里用 0/50/100 三档表示空闲/活跃/满载
+            if out["inflight"] > 0:
+                out["util"] = min(100, 30 + out["inflight"] * 30)  # 推理中显示 60-100
+            elif out["active_now"]:
+                out["util"] = 15  # 最近 10 秒有调用过
+            else:
+                out["util"] = 0   # 空闲
+            out["models"] = len(out["model_calls"]) if out["model_calls"] else (8 if online else 0)
+        else:
+            # 旧版 NPU 服务（无 get_stats）：保留兼容模式
+            out["util"] = 10 if online else 0
+            out["models"] = 8 if online else 0
     except Exception:
         pass
     return out

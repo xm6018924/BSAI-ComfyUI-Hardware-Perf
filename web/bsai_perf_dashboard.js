@@ -496,8 +496,14 @@
             g0.online);
 
         setGaugeValue("npu", np.util || 0,
-            np.online ? `${np.util}%` : "N/A",
-            np.online ? `${np.models} 模型 · ${np.latency_ms}ms` : "NPU 服务离线",
+            np.online
+                ? (np.active_now ? `${np.util}% 活跃` : "空闲")
+                : "N/A",
+            np.online
+                ? (np.total_calls > 0
+                    ? `${np.total_calls} 次 · ${np.latency_ms}ms`
+                    : `${np.models} 模型就绪`)
+                : "NPU 服务离线",
             np.online);
 
         setGaugeValue("cpu", cp.util || 0,
